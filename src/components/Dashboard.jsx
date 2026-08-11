@@ -9,8 +9,17 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing }) {
   const [query, setQuery] = useState('');
 
   const stats = useMemo(() => {
-    const faulty = boxes.filter((b) => isFaulty(b.faultStatus)).length;
-    return { total: boxes.length, faulty, healthy: boxes.length - faulty };
+    const total = boxes.length;
+    // ציוד שנמצא אצל המדריך
+    const healthy = boxes.filter((b) => 
+      !b.faultStatus || b.faultStatus.includes('אצל המדריך')
+    ).length;
+    // ציוד שנאסף מניתוק או תקול
+    const faulty = boxes.filter((b) => 
+      b.faultStatus && (b.faultStatus.includes('נאסף מניתוק') || b.faultStatus.includes('תקול'))
+    ).length;
+
+    return { total, healthy, faulty };
   }, [boxes]);
 
   const filtered = useMemo(() => {

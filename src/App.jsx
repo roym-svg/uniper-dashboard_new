@@ -1,72 +1,37 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AnimatePresence } from 'framer-motion';
-import { fetchInventory } from './lib/api.js';
-import Spinner from './components/Spinner.jsx';
-import ErrorState from './components/ErrorState.jsx';
-import SelectGuide from './components/SelectGuide.jsx';
-import Dashboard from './components/Dashboard.jsx';
+import { motion } from 'framer-motion';
+import { Boxes, CheckCircle2, AlertTriangle } from 'lucide-react';
 
-// URLSearchParams already decodes percent-encoding (handles Hebrew, spaces,
-// etc.) — read the "guide" param directly, no manual decodeURIComponent needed.
-function getGuideParam() {
-  const params = new URLSearchParams(window.location.search);
-  const value = params.get('guide');
-  return value ? value.trim() : null;
-}
+const CARD_CONFIG = [
+  { key: 'total', label: 'סה"כ ממירים', icon: Boxes, accent: 'text-brand', bg: 'bg-brand/10' },
+  { key: 'healthy', label: 'אצל המדריך', icon: CheckCircle2, accent: 'text-good', bg: 'bg-good/10' },
+  { key: 'faulty', label: 'נאסף מניתוק / תקול', icon: AlertTriangle, accent: 'text-critical', bg: 'bg-critical/10' },
+];
 
-export default function App() {
-  const [boxes, setBoxes] = useState([]);
-  const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
-  const [error, setError] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const guideParam = getGuideParam();
-
-  const load = useCallback(async ({ isRefresh = false } = {}) => {
-    isRefresh ? setRefreshing(true) : setStatus('loading');
-    setError('');
-    try {
-      const data = await fetchInventory();
-      setBoxes(data);
-      setStatus('ready');
-    } catch (err) {
-      setError(err.message || 'Something went wrong while fetching inventory.');
-      setStatus('error');
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const guideBoxes = useMemo(() => {
-    if (!guideParam) return [];
-    const target = guideParam.toLowerCase();
-    return boxes.filter((b) => String(b.guideName || '').trim().toLowerCase() === target);
-  }, [boxes, guideParam]);
-
-  if (status === 'loading') {
-    return <Spinner />;
-  }
-
-  if (status === 'error') {
-    return <ErrorState message={error} onRetry={() => load()} />;
-  }
+export default function StatCards({ total, healthy, faulty }) {
+  const values = { total, healthy, faulty };
 
   return (
-    <AnimatePresence mode="wait">
-      {guideParam ? (
-        <Dashboard
-          key="dashboard"
-          guideName={guideParam}
-          boxes={guideBoxes}
-          onRefresh={() => load({ isRefresh: true })}
-          refreshing={refreshing}
-        />
-      ) : (
-        <SelectGuide key="select" boxes={boxes} />
-      )}
-    </AnimatePresence>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      {CARD_CONFIG.map((card, i) => {
+        const Icon = card.icon;
+        return (
+          <motion.div
+            key={card.key}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+            className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-soft"
+          >
+            <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${card.bg}`}>
+              <Icon className={`h-6 w-6 ${card.accent}`} />
+            </div>
+            <div>
+              <p className="text-sm text-slate-500">{card.label}</p>
+              <p className="text-2xl font-bold tabular-nums text-slate-900">{values[card.key] ?? 0}</p>
+            </div>
+          </motion.div>
+        );
+      })}
+    </div>
   );
 }
