@@ -3,21 +3,26 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, Search, ArrowLeft, Hash } from 'lucide-react';
 import StatCards from './StatCards.jsx';
 import StatusBadge from './StatusBadge.jsx';
-import { isFaulty } from '../lib/faultStatus.js';
 
 export default function Dashboard({ guideName, boxes, onRefresh, refreshing }) {
   const [query, setQuery] = useState('');
 
   const stats = useMemo(() => {
     const total = boxes.length;
-    // ציוד שנמצא אצל המדריך
-    const healthy = boxes.filter((b) => 
-      !b.faultStatus || b.faultStatus.includes('אצל המדריך')
-    ).length;
-    // ציוד שנאסף מניתוק או תקול
-    const faulty = boxes.filter((b) => 
-      b.faultStatus && (b.faultStatus.includes('נאסף מניתוק') || b.faultStatus.includes('תקול'))
-    ).length;
+
+    // ספירה של כל הערכות שאינן בסטטוס רגיל (איסוף / מניתוק / תקול)
+    const faulty = boxes.filter((b) => {
+      const s = String(b.faultStatus || '');
+      return (
+        s.includes('איסוף') || 
+        s.includes('ניתוק') || 
+        s.includes('תקול') || 
+        s.toLowerCase().includes('collected')
+      );
+    }).length;
+
+    // תקינות = סה"כ פחות הלא תקינות/איסוף
+    const healthy = total - faulty;
 
     return { total, healthy, faulty };
   }, [boxes]);
@@ -102,7 +107,7 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing }) {
                     <td className="px-5 py-3 font-mono text-slate-700">{box.serialNumber}</td>
                     <td className="px-5 py-3 text-slate-600">{box.guideName}</td>
                     <td className="px-5 py-3">
-                      <StatusBadge faultStatus={box.faultStatus} />
+                      <StatusBadge status={box.faultStatus} />
                     </td>
                   </motion.tr>
                 ))}
@@ -127,7 +132,7 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing }) {
                     <Hash className="h-3.5 w-3.5 text-slate-400" />
                     {box.serialNumber}
                   </div>
-                  <StatusBadge faultStatus={box.faultStatus} />
+                  <StatusBadge status={box.faultStatus} />    
                 </div>
                 <p className="mt-2 text-xs text-slate-500">{box.guideName}</p>
               </motion.div>
