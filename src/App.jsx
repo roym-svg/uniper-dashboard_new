@@ -14,7 +14,7 @@ function getGuideParam() {
 
 export default function App() {
   const [boxes, setBoxes] = useState([]);
-  const [status, setStatus] = useState('loading');
+  const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const guideParam = getGuideParam();
@@ -41,17 +41,16 @@ export default function App() {
   const guideBoxes = useMemo(() => {
     if (!guideParam) return [];
     
-    // התאמה נקייה וגמישה בין השם בקישור לשם בטבלה
     const cleanTarget = decodeURIComponent(guideParam)
       .replace(/['"״׳\-]/g, '')
       .toLowerCase()
       .trim();
 
     return boxes.filter((b) => {
-      const gName = String(b.guideName || '')
-        .replace(/['"״׳\-]/g, '')
-        .toLowerCase()
-        .trim();
+      const gName = String(b.guideName || '').replace(/['"״׳\-]/g, '').toLowerCase().trim();
+      
+      // התיקון הקריטי: אם אין שם מדריך בשורה, אל תכניס אותו בטעות למיכאל!
+      if (!gName) return false; 
         
       return gName === cleanTarget || gName.includes(cleanTarget) || cleanTarget.includes(gName);
     });

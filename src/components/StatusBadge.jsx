@@ -1,14 +1,10 @@
 import React from 'react';
 
-export function StatusBadge({ status }) {
+export default function StatusBadge({ status }) {
   const statusStr = String(status || '');
   
-  // בדיקה אם המכשיר נאסף מניתוק / באיסוף
-  const isCollected = 
-    statusStr.includes('איסוף') || 
-    statusStr.includes('ניתוק') || 
-    statusStr.toLowerCase().includes('collected');
-
+  // זיהוי ערכות מאיסוף או תקולות
+  const isCollected = statusStr.includes('איסוף') || statusStr.includes('ניתוק') || statusStr.toLowerCase().includes('collected');
   const isFaulty = statusStr.includes('תקול');
 
   if (isCollected || isFaulty) {
@@ -20,7 +16,7 @@ export function StatusBadge({ status }) {
     );
   }
 
-  // תקין - אצל המדריך
+  // ברירת מחדל: תקין ואצל המדריך
   return (
     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200">
       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
@@ -28,5 +24,3 @@ export function StatusBadge({ status }) {
     </span>
   );
 }
-
-export default StatusBadge;
