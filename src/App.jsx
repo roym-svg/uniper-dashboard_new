@@ -24,7 +24,14 @@ export default function App() {
     setError('');
     try {
       const data = await fetchInventory();
-      setBoxes(data);
+      
+      // התיקון הקריטי: אם השרת שלח שגיאה מסודרת, נציג אותה במקום לקרוס!
+      if (data && data.error) {
+        throw new Error(data.message);
+      }
+      
+      // מוודאים שתמיד נכנסת רשימה (מערך) כדי שהאפליקציה לא תקרוס
+      setBoxes(Array.isArray(data) ? data : []);
       setStatus('ready');
     } catch (err) {
       setError(err.message || 'Something went wrong while fetching inventory.');
@@ -49,7 +56,6 @@ export default function App() {
     return boxes.filter((b) => {
       const gName = String(b.guideName || '').replace(/['"״׳\-]/g, '').toLowerCase().trim();
       
-      // התיקון הקריטי: אם אין שם מדריך בשורה, אל תכניס אותו בטעות למיכאל!
       if (!gName) return false; 
         
       return gName === cleanTarget || gName.includes(cleanTarget) || cleanTarget.includes(gName);
