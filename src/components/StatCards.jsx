@@ -1,14 +1,19 @@
 import { motion } from 'framer-motion';
-import { Boxes, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Boxes, CheckCircle2, RefreshCw } from 'lucide-react';
 
 const CARD_CONFIG = [
-  { key: 'total', label: 'Total Boxes', icon: Boxes, accent: 'text-brand', bg: 'bg-brand/10' },
-  { key: 'אצל המדריך', label: 'Total אצל המדריך', icon: CheckCircle2, accent: 'text-good', bg: 'bg-good/10' },
-  { key: 'faulty', label: 'Total Faulty', icon: AlertTriangle, accent: 'text-critical', bg: 'bg-critical/10' },
+  { key: 'total', label: 'סה"כ ערכות במלאי', icon: Boxes, accent: 'text-brand', bg: 'bg-brand/10' },
+  { key: 'healthy', label: 'אצל המדריך', icon: CheckCircle2, accent: 'text-good', bg: 'bg-good/10' },
+  { key: 'collected', label: 'נאסף מניתוק (אצל המדריך)', icon: RefreshCw, accent: 'text-amber-600', bg: 'bg-amber-500/10' },
 ];
 
 export default function StatCards({ total, healthy, faulty }) {
-  const values = { total, healthy, faulty };
+  // mapping exact values received from Dashboard
+  const values = { 
+    total: total || 0, 
+    healthy: healthy || 0, 
+    collected: faulty || 0 
+  };
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
