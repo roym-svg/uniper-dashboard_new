@@ -14,7 +14,7 @@ function getGuideParam() {
 
 export default function App() {
   const [boxes, setBoxes] = useState([]);
-  const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
+  const [status, setStatus] = useState('loading');
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const guideParam = getGuideParam();
@@ -38,10 +38,10 @@ export default function App() {
     load();
   }, [load]);
 
-  // סינון ממירים לפי המדריך שנבחר (עם ניקוי תווים מיוחדים וגרשיים)
   const guideBoxes = useMemo(() => {
     if (!guideParam) return [];
     
+    // התאמה נקייה וגמישה בין השם בקישור לשם בטבלה
     const cleanTarget = decodeURIComponent(guideParam)
       .replace(/['"״׳\-]/g, '')
       .toLowerCase()
