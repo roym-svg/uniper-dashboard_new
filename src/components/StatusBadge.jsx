@@ -1,21 +1,23 @@
-import { CheckCircle2, AlertTriangle } from 'lucide-react';
-import { getStatusMeta } from '../lib/faultStatus.js';
+import React from 'react';
 
-// Icon + label always ship together — status color never carries meaning alone.
-export default function StatusBadge({ faultStatus }) {
-  const { role, label } = getStatusMeta(faultStatus);
-  const isGood = role === 'good';
+export function StatusBadge({ status }) {
+  // קביעת צבע הרקע והטקסט לפי התוכן בעברית
+  let badgeStyle = 'bg-emerald-50 text-emerald-700 border-emerald-200'; // ירוק - ברירת מחדל (אצל המדריך)
+
+  if (status && status.includes('נאסף מניתוק')) {
+    badgeStyle = 'bg-amber-50 text-amber-700 border-amber-200'; // כתום/צהוב
+  } else if (status && status.includes('בדרך')) {
+    badgeStyle = 'bg-blue-50 text-blue-700 border-blue-200'; // כחול
+  } else if (status && (status.includes('מחסן') || status.includes('משרד'))) {
+    badgeStyle = 'bg-purple-50 text-purple-700 border-purple-200'; // סגול
+  }
 
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${
-        isGood
-          ? 'bg-good/10 text-good ring-good/20'
-          : 'bg-critical/10 text-critical ring-critical/20'
-      }`}
-    >
-      {isGood ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
-      {label}
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${badgeStyle}`}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+      {status || 'אצל המדריך'}
     </span>
   );
 }
+
+export default StatusBadge;
