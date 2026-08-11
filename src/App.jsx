@@ -12,6 +12,13 @@ function getGuideParam() {
   return value ? value.trim() : null;
 }
 
+function normalizeForMatch_(name) {
+  return String(name || '')
+    .replace(/['"״׳\-]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
 export default function App() {
   const [boxes, setBoxes] = useState([]);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
@@ -47,19 +54,34 @@ export default function App() {
 
   const guideBoxes = useMemo(() => {
     if (!guideParam) return [];
-    
-    const cleanTarget = decodeURIComponent(guideParam)
-      .replace(/['"״׳\-]/g, '')
-      .toLowerCase()
-      .trim();
 
-    return boxes.filter((b) => {
-      const gName = String(b.guideName || '').replace(/['"״׳\-]/g, '').toLowerCase().trim();
-      
-      if (!gName) return false; 
-        
-      return gName === cleanTarget || gName.includes(cleanTarget) || cleanTarget.includes(gName);
+    // Note: URLSearchParams.get() already decodes percent-encoding, so no
+    // extra decodeURIComponent() is applied here — doing it twice risked a
+    // thrown "URI malformed" error if a name ever contained a lone '%'.
+    const cleanTarget = normalizeForMatch_(guideParam);
+
+    const exact = boxes.filter((b) => normalizeForMatch_(b.guideName) === cleanTarget);
+    if (exact.length > 0) return exact;
+
+    // Fallback for legacy/bookmarked links built before technician names
+    // were cleaned up server-side (e.g. an old link still has a location
+    // suffix like "דוד דסטה פרדס חנה"). Only accept this fallback when it
+    // resolves to exactly ONE technician — never silently merge two
+    // different people who happen to share a name fragment.
+    const candidates = new Set();
+    boxes.forEach((b) => {
+      const gName = normalizeForMatch_(b.guideName);
+      if (gName && (cleanTarget.includes(gName) || gName.includes(cleanTarget))) {
+        candidates.add(gName);
+      }
     });
+
+    if (candidates.size === 1) {
+      const [only] = candidates;
+      return boxes.filter((b) => normalizeForMatch_(b.guideName) === only);
+    }
+
+    return [];
   }, [boxes, guideParam]);
 
   if (status === 'loading') {
