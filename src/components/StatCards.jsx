@@ -3,7 +3,7 @@ import { Boxes, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 const CARD_CONFIG = [
   { key: 'total', label: 'Total Boxes', icon: Boxes, accent: 'text-brand', bg: 'bg-brand/10' },
-  { key: 'healthy', label: 'Total Healthy', icon: CheckCircle2, accent: 'text-good', bg: 'bg-good/10' },
+  { key: 'אצל המדריך', label: 'Total אצל המדריך', icon: CheckCircle2, accent: 'text-good', bg: 'bg-good/10' },
   { key: 'faulty', label: 'Total Faulty', icon: AlertTriangle, accent: 'text-critical', bg: 'bg-critical/10' },
 ];
 
