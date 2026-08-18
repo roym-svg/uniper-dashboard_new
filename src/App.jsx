@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './lib/firebase.js';
 import { fetchInventory } from './lib/api.js';
+import Login from './components/Login.jsx';
 import Spinner from './components/Spinner.jsx';
 import ErrorState from './components/ErrorState.jsx';
 import SelectGuide from './components/SelectGuide.jsx';
@@ -20,11 +23,28 @@ function normalizeForMatch_(name) {
 }
 
 export default function App() {
+  // Login gate, backed by Firebase Auth. `user` is:
+  //   undefined  — Firebase hasn't reported the initial auth state yet
+  //                (e.g. restoring its own persisted session on load)
+  //   null       — Firebase has confirmed no one is signed in
+  //   User       — a real, signed-in Firebase user
+  // Nothing below — no boxes, no fetch, no dashboard — renders until it's a
+  // real User. onAuthStateChanged also fires automatically after a
+  // successful sign-in or sign-out, so this is the single source of truth
+  // for the login gate (Login.jsx doesn't need an onSuccess callback).
+  const [user, setUser] = useState(undefined);
   const [boxes, setBoxes] = useState([]);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const guideParam = getGuideParam();
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+    });
+    return unsubscribe;
+  }, []);
 
   const load = useCallback(async ({ isRefresh = false } = {}) => {
     isRefresh ? setRefreshing(true) : setStatus('loading');
@@ -49,8 +69,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    // Don't fetch inventory data at all until Firebase confirms a signed-in
+    // user — nothing is pulled into memory client-side before that.
+    if (user) {
+      load();
+    }
+  }, [user, load]);
 
   const guideBoxes = useMemo(() => {
     if (!guideParam) return [];
@@ -83,6 +107,16 @@ export default function App() {
 
     return [];
   }, [boxes, guideParam]);
+
+  if (user === undefined) {
+    // Firebase is still restoring its own persisted session — avoid a
+    // flash of the login screen for a guide who is actually still signed in.
+    return <Spinner label="בודק התחברות…" />;
+  }
+
+  if (!user) {
+    return <Login />;
+  }
 
   if (status === 'loading') {
     return <Spinner />;
