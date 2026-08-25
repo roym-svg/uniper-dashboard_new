@@ -1,0 +1,41 @@
+rules_version = '2';
+
+// Security rules for the Uniper Inventory Dashboard's /users/{uid} profiles.
+//
+// Deploy: paste into Firebase Console -> Firestore Database -> Rules, or
+// (if you use the Firebase CLI) save as firestore.rules at your repo root
+// and run `firebase deploy --only firestore:rules`.
+//
+// Model: /users/{uid} holds { email, displayName, role, createdAt } for
+// every signed-in account. role is "admin" or "technician".
+//
+//   - A signed-in user may always read their OWN profile doc (App.jsx needs
+//     this on every load to decide technician-vs-admin routing).
+//   - Only an existing admin may read any OTHER user's profile, create new
+//     profiles, or change a role. This is what stops a technician from
+//     hand-editing their own doc's role to "admin" in devtools, and from
+//     browsing the full technician roster via Firestore directly (separate
+//     from what the UI renders).
+//   - No one may delete a profile via these rules — deactivate by other
+//     means (e.g. a manual console edit) if that's ever needed; deletes are
+//     easy to add later but easy to regret if added by default.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+  }
+}

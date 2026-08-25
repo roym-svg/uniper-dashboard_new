@@ -1,9 +1,16 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, UserRound, ChevronRight, Boxes } from 'lucide-react';
+import { Search, UserRound, ChevronRight, Boxes, UserPlus, LogOut } from 'lucide-react';
+import { signOut } from 'firebase/auth';
+import { auth } from '../lib/firebase.js';
+import CreateUserModal from './CreateUserModal.jsx';
 
+// This screen is only ever rendered for admins now — technicians are routed
+// straight to their own Dashboard by App.jsx and never see the full
+// technician list, so no role prop/check is needed here.
 export default function SelectGuide({ boxes }) {
   const [query, setQuery] = useState('');
+  const [showCreateUser, setShowCreateUser] = useState(false);
 
   const guides = useMemo(() => {
     const counts = new Map();
@@ -35,6 +42,23 @@ export default function SelectGuide({ boxes }) {
       animate={{ opacity: 1 }}
       className="min-h-screen bg-slate-50 px-6 py-16"
     >
+      <div className="mx-auto flex max-w-3xl items-center justify-end gap-2">
+        <button
+          onClick={() => setShowCreateUser(true)}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-3.5 py-2 text-xs font-semibold text-white shadow-soft transition hover:bg-blue-700"
+        >
+          <UserPlus className="h-3.5 w-3.5" />
+          משתמש חדש
+        </button>
+        <button
+          onClick={() => signOut(auth)}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-500 shadow-soft transition hover:bg-slate-50"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          התנתקות
+        </button>
+      </div>
+
       <div className="mx-auto max-w-3xl text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10">
           <Boxes className="h-7 w-7 text-brand" />
@@ -81,6 +105,8 @@ export default function SelectGuide({ boxes }) {
           <p className="col-span-full py-8 text-sm text-slate-400">No technicians match "{query}".</p>
         )}
       </div>
+
+      {showCreateUser && <CreateUserModal onClose={() => setShowCreateUser(false)} />}
     </motion.div>
   );
 }

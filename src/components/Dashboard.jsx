@@ -1,10 +1,15 @@
 import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Search, ArrowLeft, Hash } from 'lucide-react';
+import { RefreshCw, Search, ArrowLeft, Hash, LogOut } from 'lucide-react';
+import { signOut } from 'firebase/auth';
+import { auth } from '../lib/firebase.js';
 import StatCards from './StatCards.jsx';
 import StatusBadge from './StatusBadge.jsx';
 
-export default function Dashboard({ guideName, boxes, onRefresh, refreshing }) {
+// showBackButton: false for a technician landing here directly (App.jsx
+// routes them straight to their own Dashboard) — there's no picker screen
+// for them to go back to, and hiding the arrow avoids implying there is.
+export default function Dashboard({ guideName, boxes, onRefresh, refreshing, showBackButton = true }) {
   const [query, setQuery] = useState('');
 
   const stats = useMemo(() => {
@@ -48,26 +53,37 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing }) {
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-5">
           <div className="flex items-center gap-3">
-            <button
-              onClick={goBack}
-              className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-              aria-label="Back to guide selection"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
+            {showBackButton && (
+              <button
+                onClick={goBack}
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Back to guide selection"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            )}
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Technician</p>
               <h1 className="text-xl font-bold text-slate-900">{guideName}</h1>
             </div>
           </div>
-          <button
-            onClick={onRefresh}
-            disabled={refreshing}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-soft transition hover:bg-blue-700 disabled:opacity-60"
-          >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh Data
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onRefresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-soft transition hover:bg-blue-700 disabled:opacity-60"
+            >
+              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh Data
+            </button>
+            <button
+              onClick={() => signOut(auth)}
+              aria-label="התנתקות"
+              className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-500 shadow-soft transition hover:bg-slate-50"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </header>
 
