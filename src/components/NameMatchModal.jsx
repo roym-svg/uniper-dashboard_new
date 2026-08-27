@@ -99,6 +99,24 @@ export default function NameMatchModal({ boxes, onClose }) {
   // possibly the same person under two very different spellings.
   const unmatchedUsers = useMemo(() => rows.filter((r) => r.matched.length === 0), [rows]);
 
+  // The unique sheet technician names currently on the inventory, for the
+  // debug log below — lets an admin open DevTools and directly compare the
+  // exact string it's trying to match against a given unmatched user, e.g.
+  // to spot a hidden character or spelling difference that isn't visible
+  // just from reading the badge in the UI.
+  const uniqueSheetTechs = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    boxes.forEach((b) => {
+      const raw = (b.guideName || '').trim();
+      if (raw && !seen.has(raw)) {
+        seen.add(raw);
+        out.push(raw);
+      }
+    });
+    return out;
+  }, [boxes]);
+
   const matchedCount = rows.filter((r) => r.matched.length > 0).length;
 
   function openPicker(sheetName) {
@@ -196,28 +214,39 @@ export default function NameMatchModal({ boxes, onClose }) {
                   <span className="font-semibold text-slate-900">{rows.length}</span> משתמשים רשומים מותאמים לגיליון
                 </div>
                 <ul className="space-y-1.5">
-                  {rows.map((r) => (
-                    <li
-                      key={r.uid}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-medium text-slate-800">{r.displayName}</p>
-                        <p className="truncate text-xs text-slate-400">{r.email}</p>
-                      </div>
-                      {r.matched.length > 0 ? (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-good/10 px-2.5 py-1 text-xs font-semibold text-good">
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          מותאם ({r.matched.length} ערכות)
-                        </span>
-                      ) : (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-700">
-                          <AlertTriangle className="h-3.5 w-3.5" />
-                          לא נמצא בגיליון
-                        </span>
-                      )}
-                    </li>
-                  ))}
+                  {rows.map((r) => {
+                    // DEBUG: temporary console log so an admin can open
+                    // DevTools and see the exact strings being compared for
+                    // any user still showing as unmatched — useful for
+                    // spotting a hidden character or spelling difference
+                    // that two identical-looking names hide from the UI.
+                    // Safe to remove once the mismatch is tracked down.
+                    if (r.matched.length === 0) {
+                      console.log('Sheet Technicians:', uniqueSheetTechs, 'User:', r.displayName);
+                    }
+                    return (
+                      <li
+                        key={r.uid}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-slate-800">{r.displayName}</p>
+                          <p className="truncate text-xs text-slate-400">{r.email}</p>
+                        </div>
+                        {r.matched.length > 0 ? (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-good/10 px-2.5 py-1 text-xs font-semibold text-good">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            מותאם ({r.matched.length} ערכות)
+                          </span>
+                        ) : (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            לא נמצא בגיליון
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </>
             )}

@@ -10,43 +10,54 @@
 // admin name-match verification tool all use exactly one matching
 // algorithm and can never silently drift apart.
 
-// Strips characters that show up as noise around an otherwise-matching name:
-// pipes, dashes, quotes/geresh/gershayim — then collapses whitespace.
+// Hidden/invisible whitespace characters that can end up inside a name -
+// pasted in from a Google Sheet cell, or typed by accident - and that look
+// identical (or indistinguishable) from a normal space, or from nothing at
+// all, in the UI. Normalized to a real space below before the general
+// whitespace collapse/trim runs, so a trailing non-breaking space or a
+// zero-width space hiding mid-name still normalizes to exactly the same
+// thing as a clean name with no hidden characters at all. Built from
+// explicit \u escapes (never the literal characters) so this source file
+// itself never contains an actual invisible character:
+//   \u00A0 non-breaking space
+//   \u200B zero-width space
+//   \u200C / \u200D zero-width non-joiner / joiner
+//   \uFEFF BOM / zero-width no-break space
+const HIDDEN_SPACE_CHARS = /[\u00A0\u200B\u200C\u200D\uFEFF]/g;
+
+// Strips characters that show up as noise around an otherwise-matching
+// name: pipes, dashes, and quotes/geresh/gershayim in their straight and
+// curly forms (built the same way, via \u escapes, for the same reason) -
+// then collapses whitespace (including the hidden whitespace normalized
+// above) and trims both ends. This is what stops a trailing space or an
+// invisible copy-pasted character from being the reason two names that
+// look identical in the UI compare as different.
 // Deliberately does NOT try to strip "region notes" (trailing city/area
-// words) by guessing at place names — that was tried once already for the
+// words) by guessing at place names - that was tried once already for the
 // Apps Script side of this app and caused real bugs (place-name heuristics
 // clip real surnames too). Token/substring matching below handles the same
 // cases correctly without needing to know what a place name looks like.
+const QUOTE_NOISE_CHARS = /['"״׳|‘’“”`´]/g;
 function stripNoise(name) {
-  return String(name || '')
-    .replace(/['"״׳|]/g, '')
-    .replace(/-/g, ' ')
-    .replace(/\s+/g, ' ')
+  return String(name || "")
+    .replace(HIDDEN_SPACE_CHARS, " ")
+    .replace(QUOTE_NOISE_CHARS, "")
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
-// Collapses runs of 2+ Hebrew י or ו down to a single letter. This is what
-// makes "אפרים" match "אפריים", and "שנייבאום" match "שניבאום" — the two
-// spellings differ only in "ktiv male" (vowel letters written out) vs
-// "ktiv chaser" (the terser, undotted spelling), which is exactly the kind
-// of inconsistency that shows up across a hand-maintained sheet and however
-// each technician happened to type their own name when their account was
-// created. Collapsing both spellings down to the same form for COMPARISON
-// only — never used for anything that gets displayed — means either
-// spelling matches the other without needing a lookup table of every name
-// variant, and without touching non-Hebrew text (only י/ו runs are
-// affected, so this is a no-op for English names or anything without them).
 function collapseMatresLectionis(name) {
   return name.replace(/י{2,}/g, 'י').replace(/ו{2,}/g, 'ו');
 }
 
 /**
- * Normalizes a name for comparison: strips punctuation/quotes/dashes,
- * collapses doubled Hebrew י/ו, collapses whitespace, lowercases (a no-op
- * for Hebrew, but keeps this correct for any Latin-script names too).
- * This is the normalized form used for exact-match comparison; it is NOT
- * meant to be shown to a user — always display the original, un-normalized
- * name.
+ * Normalizes a name for comparison: strips punctuation/quotes/dashes and
+ * hidden/invisible whitespace, collapses doubled Hebrew י/ו, collapses
+ * whitespace, trims leading/trailing space, and lowercases (a no-op for
+ * Hebrew, but keeps this correct for any Latin-script names too). This is
+ * the normalized form used for exact-match comparison; it is NOT meant to
+ * be shown to a user — always display the original, un-normalized name.
  */
 export function normalizeName(name) {
   return collapseMatresLectionis(stripNoise(name)).toLowerCase();
