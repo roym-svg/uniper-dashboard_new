@@ -68,6 +68,60 @@ set this up. That first admin has to be created by hand, once:
    other technician or admin account can be created through that button —
    no more manual Console work needed.
 
+## Batch-creating technician accounts
+
+For onboarding many technicians at once, `scripts/createTechnicians.js` does
+the same thing as the "משתמש חדש" button in the UI, in bulk, from your own
+terminal — it does **not** run in this sandbox and I have not executed it
+against your real Firebase project.
+
+**Setup (one time):**
+
+1. `npm install` (this now pulls in `firebase-admin` as a dev dependency,
+   already added to `package.json`).
+2. Get a service account key: Firebase Console → ⚙️ Project Settings →
+   Service Accounts tab → **Generate new private key**. Save the downloaded
+   file as `scripts/serviceAccountKey.json`. This key grants full
+   server-side access to your Firebase project — `.gitignore` already
+   excludes it, so it's never committed.
+3. `scripts/technicians.json` already has all 23 technicians (email,
+   temporary password, Hebrew display name, role `technician`) from your
+   list. It's also gitignored, since it holds real emails and plaintext
+   temporary passwords — there's no reason for that to live in git history.
+
+**Run it:**
+
+```
+npm run create-technicians
+```
+
+(equivalent to `node scripts/createTechnicians.js`).
+
+**What it does:** for each entry, it looks up the email in Firebase Auth —
+if the account already exists, it reuses that UID instead of creating a
+duplicate; otherwise it creates a new Auth user with the given temporary
+password. Either way it then upserts (`merge: true`) the matching
+`/users/{uid}` Firestore doc with `email`, `displayName`, and `role`. It
+prints a `created` / `updated` / `FAILED` line per technician and a summary
+at the end, and one failure (e.g. a malformed email) doesn't stop the rest
+of the batch. **It's safe to re-run** — re-running after fixing a typo, or
+after a partial failure, updates existing accounts in place rather than
+creating duplicates. I verified this exact behavior (fresh creates, reusing
+an already-existing account instead of duplicating it, one failing entry
+not blocking the rest, and a second full run recognizing everything as
+already existing) against a mocked Firebase Admin SDK before delivering it.
+
+**Afterwards:** the 23 technicians can sign in immediately with the email +
+phone-number password from the list. Since these are shared, guessable
+default passwords, it's worth having each technician change theirs the
+first time they sign in — Firebase Auth supports this via
+`sendPasswordResetEmail` from the client SDK, or you can prompt for a
+change in the app; that's not built yet, so treat the current passwords as
+temporary. Once everyone's created, you can also delete or empty
+`scripts/technicians.json` locally if you'd rather not have the plaintext
+list sitting on disk any longer than needed (it'll stay gitignored either
+way).
+
 ## Deploying the Firestore rules
 
 The rules in `firestore.rules` are **not deployed automatically** — no tool

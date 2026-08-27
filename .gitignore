@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.env.local
+
+# Firebase Admin SDK service account key — grants full server-side access
+# to your Firebase project. Never commit this.
+scripts/serviceAccountKey.json
+
+# Contains real technician emails + plaintext default passwords. Not secret
+# in the same way as the service account key, but there's no reason for it
+# to sit in git history either — see RBAC_SETUP.md for how it's used.
+scripts/technicians.json
