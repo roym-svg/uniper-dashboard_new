@@ -64,6 +64,32 @@ export async function listAllTechnicianUsers() {
 }
 
 /**
+ * Admin-only: corrects an EXISTING technician's displayName in place (and
+ * makes sure role stays "technician"), without touching their Auth account
+ * at all — no email/password involved. This is the "fix" half of the
+ * "צור/קשר משתמש" button in NameMatchModal.jsx: when a sheet name has no
+ * matching registered user, but there's exactly one registered technician
+ * whose current name is close enough that a human admin (via that button)
+ * has confirmed is the same person, this is what makes their Firestore
+ * displayName exactly match the sheet's spelling going forward.
+ *
+ * merge: true, and only ever called with a `uid` the caller already knows
+ * is a real existing user doc — this never creates a new document.
+ *
+ * Throws on failure (e.g. a Firestore permission error) — callers should
+ * catch and show a message.
+ */
+export async function updateTechnicianDisplayName(uid, displayName) {
+  const cleanUid = String(uid || '').trim();
+  const cleanName = String(displayName || '').trim();
+  if (!cleanUid || !cleanName) {
+    throw new Error('missing-fields');
+  }
+  await setDoc(doc(db, 'users', cleanUid), { displayName: cleanName, role: 'technician' }, { merge: true });
+  return { uid: cleanUid, displayName: cleanName };
+}
+
+/**
  * Admin-only: creates a new technician (or admin) account, or links to one
  * that already exists with this email and the given password.
  *

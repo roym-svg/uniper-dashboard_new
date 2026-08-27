@@ -12,8 +12,8 @@ const ERROR_MESSAGES = {
 };
 const DEFAULT_ERROR_MESSAGE = 'אירעה שגיאה ביצירת המשתמש. נסה שוב';
 
-export default function CreateUserModal({ onClose, onCreated }) {
-  const [fullName, setFullName] = useState('');
+export default function CreateUserModal({ onClose, onCreated, initialFullName = '' }) {
+  const [fullName, setFullName] = useState(initialFullName);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('technician');

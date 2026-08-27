@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ClipboardCheck, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
-import { listAllTechnicianUsers } from '../lib/userProfile.js';
-import { getBoxesForName, normalizeName } from '../lib/nameMatch.js';
+import { X, ClipboardCheck, CheckCircle2, AlertTriangle, Loader2, Wrench } from 'lucide-react';
+import { listAllTechnicianUsers, updateTechnicianDisplayName } from '../lib/userProfile.js';
+import { getBoxesForName, nameSimilarityDistance, normalizeName } from '../lib/nameMatch.js';
+import CreateUserModal from './CreateUserModal.jsx';
+
+const CREATE_NEW_OPTION = '__create_new__';
 
 // Admin verification tool — "בדיקת התאמת שמות" — answers the question the
 // whole nameMatch.js rewrite exists to serve: for each REGISTERED
@@ -16,22 +19,52 @@ import { getBoxesForName, normalizeName } from '../lib/nameMatch.js';
 // user) — the same "23 technicians must match their sheet" goal cuts both
 // ways, and that direction is just as useful to catch (a technician who
 // has sheet rows but no account yet, or a name spelled differently enough
-// that even the fuzzy matcher can't bridge it).
+// that even the fuzzy matcher can't bridge it). Each of those gets a
+// "צור/קשר משתמש" button.
+//
+// IMPORTANT: that button does NOT auto-decide anything. A sheet name only
+// ever ends up in this list because getBoxesForName ALREADY tried every
+// automatic tier (exact, token-set, alias dictionary, substring, and
+// typo-tolerant fuzzy matching) and none of them could resolve it — so
+// re-running that exact same matcher here would always fail too; it isn't
+// a spare mechanism, it's proof the automatic path is exhausted. Past that
+// point, more guessing would mean picking between real technicians based
+// on a vibe, which is exactly what nameMatch.js is built to refuse to do.
+// So the button instead opens a small picker: choose which existing
+// unmatched account (if any) this sheet name actually belongs to — sorted
+// by similarity as a convenience default only, never auto-applied — or
+// choose to create a brand new account. Nothing is written until the
+// admin explicitly confirms.
 export default function NameMatchModal({ boxes, onClose }) {
   const [users, setUsers] = useState(null); // null = loading
   const [loadError, setLoadError] = useState('');
+  // Per-sheet-name action state: 'fixed' | 'error' | undefined.
+  const [actionState, setActionState] = useState({});
+  // Sheet name whose "link to existing / create new" picker is expanded.
+  const [pickerOpenFor, setPickerOpenFor] = useState(null);
+  const [pickerSelection, setPickerSelection] = useState(CREATE_NEW_OPTION);
+  const [pickerBusy, setPickerBusy] = useState(false);
+  // Sheet name currently being handed to CreateUserModal as a prefill.
+  const [createPrefillName, setCreatePrefillName] = useState(null);
+
+  const loadUsers = useCallback(() => {
+    return listAllTechnicianUsers().then((list) => {
+      if (list.length === 0) setLoadError('לא נמצאו משתמשי טכנאים ב-Firestore (או שאירעה שגיאת הרשאות).');
+      else setLoadError('');
+      setUsers(list);
+      return list;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    listAllTechnicianUsers().then((list) => {
+    loadUsers().then(() => {
       if (cancelled) return;
-      if (list.length === 0) setLoadError('לא נמצאו משתמשי טכנאים ב-Firestore (או שאירעה שגיאת הרשאות).');
-      setUsers(list);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadUsers]);
 
   const rows = useMemo(() => {
     if (!users) return [];
@@ -51,11 +84,6 @@ export default function NameMatchModal({ boxes, onClose }) {
     const registeredNorms = new Set(users.map((u) => normalizeName(u.displayName)));
     const unmatched = [];
     sheetNames.forEach((raw, norm) => {
-      // A sheet name counts as "covered" if it exact/token-matches a
-      // registered user OR if getBoxesForName would resolve some
-      // registered user's name down to it (keeps this consistent with the
-      // same fuzzy logic used everywhere else, instead of a stricter
-      // separate check that could disagree with the app's real behavior).
       const coveredByFuzzyMatch = users.some((u) => {
         const matchedBoxes = getBoxesForName(boxes, u.displayName);
         return matchedBoxes.some((b) => normalizeName(b.guideName) === norm);
@@ -65,9 +93,55 @@ export default function NameMatchModal({ boxes, onClose }) {
     return unmatched.sort((a, b) => a.localeCompare(b));
   }, [users, boxes]);
 
+  // Registered technicians with zero matched sheet rows right now — the
+  // pool the "link to existing account" picker offers, on the theory that
+  // an unmatched sheet name and an unmatched registered account are quite
+  // possibly the same person under two very different spellings.
+  const unmatchedUsers = useMemo(() => rows.filter((r) => r.matched.length === 0), [rows]);
+
   const matchedCount = rows.filter((r) => r.matched.length > 0).length;
 
+  function openPicker(sheetName) {
+    setPickerOpenFor(sheetName);
+    // Default the dropdown to whichever unmatched account is textually
+    // closest — pure UX convenience (see nameSimilarityDistance's own
+    // doc comment); the admin still has to look at it and confirm.
+    if (unmatchedUsers.length > 0) {
+      const ranked = [...unmatchedUsers].sort(
+        (a, b) => nameSimilarityDistance(sheetName, a.displayName) - nameSimilarityDistance(sheetName, b.displayName)
+      );
+      setPickerSelection(ranked[0].uid);
+    } else {
+      setPickerSelection(CREATE_NEW_OPTION);
+    }
+  }
+
+  function closePicker() {
+    setPickerOpenFor(null);
+    setPickerBusy(false);
+  }
+
+  async function confirmPicker(sheetName) {
+    if (pickerSelection === CREATE_NEW_OPTION) {
+      closePicker();
+      setCreatePrefillName(sheetName);
+      return;
+    }
+
+    setPickerBusy(true);
+    try {
+      await updateTechnicianDisplayName(pickerSelection, sheetName);
+      setActionState((prev) => ({ ...prev, [sheetName]: 'fixed' }));
+      closePicker();
+      await loadUsers(); // re-fetch so badges/lists reflect the correction immediately
+    } catch {
+      setActionState((prev) => ({ ...prev, [sheetName]: 'error' }));
+      setPickerBusy(false);
+    }
+  }
+
   return (
+    <>
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }}
@@ -153,15 +227,66 @@ export default function NameMatchModal({ boxes, onClose }) {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
                   שמות בגיליון ללא משתמש רשום תואם ({unmatchedSheetNames.length})
                 </p>
-                <ul className="space-y-1">
-                  {unmatchedSheetNames.map((name) => (
-                    <li
-                      key={name}
-                      className="truncate rounded-lg bg-amber-500/5 px-3 py-1.5 text-sm text-amber-800"
-                    >
-                      {name}
-                    </li>
-                  ))}
+                <ul className="space-y-1.5">
+                  {unmatchedSheetNames.map((name) => {
+                    const state = actionState[name];
+                    const pickerOpen = pickerOpenFor === name;
+                    return (
+                      <li key={name} className="rounded-lg bg-amber-500/5 px-3 py-1.5 text-sm text-amber-800">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 truncate">{name}</span>
+                          {state === 'fixed' ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-good">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              עודכן
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => (pickerOpen ? closePicker() : openPicker(name))}
+                              title="קשר לחשבון קיים או צור משתמש חדש עם השם הזה"
+                              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-amber-300/60 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-500/10"
+                            >
+                              <Wrench className="h-3.5 w-3.5" />
+                              {state === 'error' ? 'שגיאה — נסה שוב' : 'צור/קשר משתמש'}
+                            </button>
+                          )}
+                        </div>
+
+                        {pickerOpen && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-amber-300/30 pt-2">
+                            <select
+                              value={pickerSelection}
+                              onChange={(e) => setPickerSelection(e.target.value)}
+                              disabled={pickerBusy}
+                              className="min-w-0 flex-1 rounded-lg border border-amber-300/60 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none disabled:opacity-60"
+                            >
+                              <option value={CREATE_NEW_OPTION}>— צור משתמש חדש —</option>
+                              {unmatchedUsers.map((u) => (
+                                <option key={u.uid} value={u.uid}>
+                                  קשר ל: {u.displayName} ({u.email})
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => confirmPicker(name)}
+                              disabled={pickerBusy}
+                              className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+                            >
+                              {pickerBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                              אישור
+                            </button>
+                            <button
+                              onClick={closePicker}
+                              disabled={pickerBusy}
+                              className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              ביטול
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
@@ -179,5 +304,21 @@ export default function NameMatchModal({ boxes, onClose }) {
         </motion.div>
       </motion.div>
     </AnimatePresence>
+
+      {createPrefillName && (
+        <CreateUserModal
+          initialFullName={createPrefillName}
+          onClose={() => setCreatePrefillName(null)}
+          onCreated={() => {
+            // Deliberately does NOT close the modal — CreateUserModal shows
+            // its own "created successfully" confirmation and the admin
+            // closes it themselves (its "סגירה" button, which triggers
+            // onClose above). Auto-closing here would yank the modal away
+            // before that confirmation is ever seen.
+            loadUsers();
+          }}
+        />
+      )}
+    </>
   );
 }
