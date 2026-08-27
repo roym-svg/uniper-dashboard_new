@@ -1,13 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, Search, ArrowLeft, Hash, LogOut, AlertTriangle, Flag, Loader2, Check } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase.js';
-import { reportMissing } from '../lib/api.js';
+import { reportMissing, reportLowInventory } from '../lib/api.js';
 import StatCards from './StatCards.jsx';
 import StatusBadge from './StatusBadge.jsx';
 
 const LOW_STOCK_THRESHOLD = 4;
+
+// sessionStorage key prefix for the "already emailed the admin about this
+// technician's low stock this session" guard below — versioned (v1) so a
+// future change to what gets stored can invalidate old entries just by
+// bumping this string, without needing a migration.
+const LOW_INVENTORY_NOTIFIED_KEY_PREFIX = 'uniper_low_inventory_notified_v1:';
 
 function timeAgoLabel(timestampMs) {
   if (!timestampMs) return null;
@@ -59,6 +65,49 @@ export default function Dashboard({
     if (!q) return boxes;
     return boxes.filter((b) => String(b.serialNumber || '').toLowerCase().includes(q));
   }, [boxes, query]);
+
+  // Emails the admin once, per technician, per browser session, the first
+  // time that technician's own dashboard shows healthy stock at or below
+  // the low-stock threshold.
+  //
+  // Gated on `!showBackButton` rather than on stats.healthy alone: this
+  // component is also what an admin sees when they browse to a specific
+  // technician via ?guide= (showBackButton=true there), and an admin
+  // clicking through several low-stock technicians shouldn't trigger a
+  // fresh "low inventory" email for each one they merely looked at — the
+  // point of this notification is the technician's own session showing
+  // their own stock is low, not an admin's Browse.
+  //
+  // The sessionStorage flag is set BEFORE the request resolves (not in a
+  // .then()), so a second effect run in quick succession — React
+  // StrictMode's dev-mode double-invoke, or an unrelated re-render — can't
+  // both slip past the guard and send two emails. If the request itself
+  // fails, this simply won't retry again this session; that's an accepted
+  // trade-off for "at most once", not "exactly once, retried on failure".
+  useEffect(() => {
+    if (showBackButton) return;
+    if (stats.healthy > LOW_STOCK_THRESHOLD) return;
+    if (!guideName) return;
+
+    const sessionKey = LOW_INVENTORY_NOTIFIED_KEY_PREFIX + guideName;
+    try {
+      if (sessionStorage.getItem(sessionKey) === '1') return;
+      sessionStorage.setItem(sessionKey, '1');
+    } catch {
+      // sessionStorage unavailable (private browsing, quota, disabled) —
+      // fall through and send anyway; this render just loses the
+      // once-per-session guarantee, rather than silently never notifying.
+    }
+
+    reportLowInventory({
+      guideName,
+      healthyCount: stats.healthy,
+      threshold: LOW_STOCK_THRESHOLD,
+    }).catch(() => {
+      // Best-effort — a failed low-inventory email isn't worth surfacing
+      // as an error to the technician using this dashboard.
+    });
+  }, [showBackButton, stats.healthy, guideName]);
 
   function goBack() {
     const url = new URL(window.location.href);

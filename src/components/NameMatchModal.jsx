@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ClipboardCheck, CheckCircle2, AlertTriangle, Loader2, Wrench } from 'lucide-react';
+import { X, ClipboardCheck, CheckCircle2, AlertTriangle, Loader2, Wrench, EyeOff } from 'lucide-react';
 import { listAllTechnicianUsers, updateTechnicianDisplayName } from '../lib/userProfile.js';
 import { getBoxesForName, nameSimilarityDistance, normalizeName } from '../lib/nameMatch.js';
 import CreateUserModal from './CreateUserModal.jsx';
@@ -35,7 +35,7 @@ const CREATE_NEW_OPTION = '__create_new__';
 // by similarity as a convenience default only, never auto-applied — or
 // choose to create a brand new account. Nothing is written until the
 // admin explicitly confirms.
-export default function NameMatchModal({ boxes, onClose }) {
+export default function NameMatchModal({ boxes, onClose, onHideTechnician }) {
   const [users, setUsers] = useState(null); // null = loading
   const [loadError, setLoadError] = useState('');
   // Per-sheet-name action state: 'fixed' | 'error' | undefined.
@@ -46,6 +46,14 @@ export default function NameMatchModal({ boxes, onClose }) {
   const [pickerBusy, setPickerBusy] = useState(false);
   // Sheet name currently being handed to CreateUserModal as a prefill.
   const [createPrefillName, setCreatePrefillName] = useState(null);
+  // Per-sheet-name "הסתר מדריך" state: 'hiding' | 'error' | undefined.
+  // There's no 'hidden' value — a successful hide flows all the way up to
+  // App.jsx, which re-filters `boxes` and passes the smaller array back
+  // down as a prop; once that happens the name simply isn't in
+  // unmatchedSheetNames anymore and its <li> unmounts on its own. This
+  // state only needs to cover the in-flight moment before that round trip
+  // completes.
+  const [hideState, setHideState] = useState({});
 
   const loadUsers = useCallback(() => {
     return listAllTechnicianUsers().then((list) => {
@@ -155,6 +163,23 @@ export default function NameMatchModal({ boxes, onClose }) {
     } catch {
       setActionState((prev) => ({ ...prev, [sheetName]: 'error' }));
       setPickerBusy(false);
+    }
+  }
+
+  // Permanently hides a sheet name that isn't a real technician to onboard
+  // — an old row, a typo that isn't worth fixing, a former employee — so it
+  // stops cluttering this unmatched list (and, since App.jsx filters
+  // `boxes` globally by the same ignored-names list, stops showing up
+  // anywhere else in the app either). This is the UI replacement for
+  // hand-editing Code.gs's old allowlist: no redeploy, just a click.
+  async function handleHide(sheetName) {
+    if (!onHideTechnician) return;
+    setHideState((prev) => ({ ...prev, [sheetName]: 'hiding' }));
+    try {
+      await onHideTechnician(sheetName);
+      // No 'hidden' state to set — see the hideState declaration's comment.
+    } catch {
+      setHideState((prev) => ({ ...prev, [sheetName]: 'error' }));
     }
   }
 
@@ -270,14 +295,31 @@ export default function NameMatchModal({ boxes, onClose }) {
                               עודכן
                             </span>
                           ) : (
-                            <button
-                              onClick={() => (pickerOpen ? closePicker() : openPicker(name))}
-                              title="קשר לחשבון קיים או צור משתמש חדש עם השם הזה"
-                              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-amber-300/60 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-500/10"
-                            >
-                              <Wrench className="h-3.5 w-3.5" />
-                              {state === 'error' ? 'שגיאה — נסה שוב' : 'צור/קשר משתמש'}
-                            </button>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {!pickerOpen && (
+                                <button
+                                  onClick={() => handleHide(name)}
+                                  disabled={hideState[name] === 'hiding'}
+                                  title="הסתר לצמיתות — לא יופיע יותר באף מסך עד שיוסר מהסתרה ידנית"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-500 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+                                >
+                                  {hideState[name] === 'hiding' ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <EyeOff className="h-3.5 w-3.5" />
+                                  )}
+                                  {hideState[name] === 'error' ? 'שגיאה — נסה שוב' : 'הסתר מדריך'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => (pickerOpen ? closePicker() : openPicker(name))}
+                                title="קשר לחשבון קיים או צור משתמש חדש עם השם הזה"
+                                className="inline-flex items-center gap-1 rounded-lg border border-amber-300/60 bg-white px-2 py-1 text-xs font-semibold text-amber-800 transition hover:bg-amber-500/10"
+                              >
+                                <Wrench className="h-3.5 w-3.5" />
+                                {state === 'error' ? 'שגיאה — נסה שוב' : 'צור/קשר משתמש'}
+                              </button>
+                            </div>
                           )}
                         </div>
 

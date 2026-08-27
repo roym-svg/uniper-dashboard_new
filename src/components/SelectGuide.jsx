@@ -10,7 +10,7 @@ import NameMatchModal from './NameMatchModal.jsx';
 // This screen is only ever rendered for admins now — technicians are routed
 // straight to their own Dashboard by App.jsx and never see the full
 // technician list, so no role prop/check is needed here.
-export default function SelectGuide({ boxes }) {
+export default function SelectGuide({ boxes, onHideTechnician }) {
   const [query, setQuery] = useState('');
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [showBulkCreate, setShowBulkCreate] = useState(false);
@@ -127,7 +127,9 @@ export default function SelectGuide({ boxes }) {
 
       {showCreateUser && <CreateUserModal onClose={() => setShowCreateUser(false)} />}
       {showBulkCreate && <BulkCreateModal onClose={() => setShowBulkCreate(false)} />}
-      {showNameMatch && <NameMatchModal boxes={boxes} onClose={() => setShowNameMatch(false)} />}
+      {showNameMatch && (
+        <NameMatchModal boxes={boxes} onHideTechnician={onHideTechnician} onClose={() => setShowNameMatch(false)} />
+      )}
     </motion.div>
   );
 }

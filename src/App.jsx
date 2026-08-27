@@ -6,6 +6,7 @@ import { fetchUserProfile } from './lib/userProfile.js';
 import { getBoxesForName } from './lib/nameMatch.js';
 import { fetchInventory } from './lib/api.js';
 import { readInventoryCache, writeInventoryCache } from './lib/inventoryCache.js';
+import { fetchIgnoredTechNames, hideTechnicianName, filterOutIgnoredBoxes } from './lib/ignoredTechs.js';
 import Login from './components/Login.jsx';
 import Spinner from './components/Spinner.jsx';
 import ErrorState from './components/ErrorState.jsx';
@@ -32,11 +33,23 @@ export default function App() {
   //   {email, displayName, role} — a valid profile
   const [profile, setProfile] = useState(undefined);
 
-  const [boxes, setBoxes] = useState([]);
+  // Raw inventory rows exactly as fetched/cached — never filtered directly.
+  // The `boxes` every other part of the app actually reads is the derived,
+  // ignored-names-filtered memo below; keeping the raw fetch separate means
+  // a hide/unhide doesn't need to re-fetch or invalidate the inventory
+  // cache, it just recomputes the filter over data that's already there.
+  const [rawBoxes, setRawBoxes] = useState([]);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(null); // ms epoch of the data currently in `boxes`
+  const [lastUpdated, setLastUpdated] = useState(null); // ms epoch of the data currently in `rawBoxes`
+
+  // Admin-managed "hide this sheet name" list (src/lib/ignoredTechs.js) —
+  // normalized keys. Fetched once auth resolves (not gated to admins only:
+  // a technician's own Dashboard needs this applied too, in case their own
+  // name is ever hidden).
+  const [ignoredNames, setIgnoredNames] = useState([]);
+
   const guideParam = getGuideParam();
 
   useEffect(() => {
@@ -75,7 +88,7 @@ export default function App() {
     if (!isRefresh) {
       const cached = readInventoryCache();
       if (cached) {
-        setBoxes(cached.data);
+        setRawBoxes(cached.data);
         setLastUpdated(cached.timestamp);
         setStatus('ready');
         return;
@@ -94,7 +107,7 @@ export default function App() {
 
       // מוודאים שתמיד נכנסת רשימה (מערך) כדי שהאפליקציה לא תקרוס
       const rows = Array.isArray(data) ? data : [];
-      setBoxes(rows);
+      setRawBoxes(rows);
       writeInventoryCache(rows);
       setLastUpdated(Date.now());
       setStatus('ready');
@@ -113,6 +126,40 @@ export default function App() {
       load();
     }
   }, [profile, load]);
+
+  const refreshIgnoredNames = useCallback(async () => {
+    const list = await fetchIgnoredTechNames();
+    setIgnoredNames(list);
+    return list;
+  }, []);
+
+  useEffect(() => {
+    // Same gating as the inventory load above — fetched once a real
+    // profile exists, for either role (see the ignoredNames state comment
+    // for why technicians need this applied too, not just admins).
+    if (profile) {
+      refreshIgnoredNames();
+    }
+  }, [profile, refreshIgnoredNames]);
+
+  // Admin-only action, threaded down to NameMatchModal via SelectGuide.
+  // Writes the hide to Firestore, then re-fetches the ignored list so
+  // `boxes` below recomputes immediately — no inventory re-fetch needed,
+  // since this only changes which already-fetched rows are shown.
+  const handleHideTechnician = useCallback(
+    async (rawName) => {
+      await hideTechnicianName(rawName);
+      await refreshIgnoredNames();
+    },
+    [refreshIgnoredNames]
+  );
+
+  // The single choke point every screen's inventory data flows through —
+  // SelectGuide's technician list, NameMatchModal's matched/unmatched
+  // breakdown, and both the admin's and a technician's own Dashboard all
+  // read this, never `rawBoxes` directly, so a hidden name disappears from
+  // all of them at once as soon as ignoredNames updates.
+  const boxes = useMemo(() => filterOutIgnoredBoxes(rawBoxes, ignoredNames), [rawBoxes, ignoredNames]);
 
   // Admin flow: filter by whichever technician is selected via ?guide=.
   const adminSelectedBoxes = useMemo(
@@ -203,7 +250,7 @@ export default function App() {
           reporterEmail={profile.email}
         />
       ) : (
-        <SelectGuide key="select" boxes={boxes} />
+        <SelectGuide key="select" boxes={boxes} onHideTechnician={handleHideTechnician} />
       )}
     </AnimatePresence>
   );

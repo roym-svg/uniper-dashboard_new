@@ -70,3 +70,38 @@ export async function reportMissing({ serialNumber, guideName, reporterEmail }) 
 
   return data;
 }
+
+/**
+ * Tells the Apps Script backend (Code.gs's handleLowInventory_) that a
+ * technician's healthy-device count has dropped to/below the low-stock
+ * threshold, so it can email the admin. Same text/plain trick as
+ * reportMissing above, for the same CORS-preflight reason.
+ *
+ * Callers are responsible for only calling this once per technician per
+ * session (see Dashboard.jsx's sessionStorage guard) — this function
+ * itself sends a request every time it's called, with no de-duplication
+ * of its own.
+ */
+export async function reportLowInventory({ guideName, healthyCount, threshold }) {
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      action: 'lowInventory',
+      guideName: String(guideName || ''),
+      healthyCount,
+      threshold,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`API request failed (HTTP ${res.status}).`);
+  }
+
+  const data = await res.json();
+  if (data && data.error) {
+    throw new Error(data.message || 'The low-inventory API returned an error.');
+  }
+
+  return data;
+}
