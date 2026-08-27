@@ -1,5 +1,5 @@
 import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, firebaseConfig } from './firebase.js';
 
@@ -32,7 +32,8 @@ export async function fetchUserProfile(uid) {
 }
 
 /**
- * Admin-only: creates a new technician (or admin) account.
+ * Admin-only: creates a new technician (or admin) account, or links to one
+ * that already exists with this email and the given password.
  *
  * Firebase's client SDK has no "create a user without signing in as them"
  * call — createUserWithEmailAndPassword always signs the calling Auth
@@ -45,9 +46,22 @@ export async function fetchUserProfile(uid) {
  * Firestore security rules should require — see the rules note delivered
  * alongside this file.
  *
- * Throws on failure (auth/email-already-in-use, auth/weak-password, a
- * Firestore permission error, etc.) — callers should catch and show a
- * message; see CreateUserModal.jsx for the Hebrew error mapping.
+ * If the email is already registered (auth/email-already-in-use), this
+ * tries signing in with the SAME given password on that same secondary
+ * app instance to recover the existing UID, then upserts the Firestore doc
+ * for it (merge: true) instead of failing outright. This makes both the
+ * single "New User" form and the bulk-create flow in BulkCreateModal.jsx
+ * safe to re-run: creating the same technician twice links to the existing
+ * account rather than erroring or duplicating. If the account exists with
+ * a DIFFERENT password than the one given, the sign-in attempt fails and
+ * the original auth/email-already-in-use error is thrown to the caller —
+ * this is intentional so an admin never silently wonders which password
+ * is actually live for that account.
+ *
+ * Throws on failure (auth/email-already-in-use with a mismatched password,
+ * auth/weak-password, a Firestore permission error, etc.) — callers should
+ * catch and show a message; see CreateUserModal.jsx for the Hebrew error
+ * mapping.
  */
 export async function createTechnicianAccount({ email, password, fullName, role = 'technician' }) {
   const cleanEmail = String(email || '').trim();
@@ -64,22 +78,39 @@ export async function createTechnicianAccount({ email, password, fullName, role 
   const secondaryAuth = getAuth(secondaryApp);
 
   try {
-    const credential = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, password);
-    const newUid = credential.user.uid;
+    let newUid;
+    let linkedExisting = false;
+    try {
+      const credential = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, password);
+      newUid = credential.user.uid;
+    } catch (err) {
+      if (err.code !== 'auth/email-already-in-use') throw err;
+      // Already registered — confirm it's the same account by signing in
+      // with the same password, rather than guessing.
+      const credential = await signInWithEmailAndPassword(secondaryAuth, cleanEmail, password);
+      newUid = credential.user.uid;
+      linkedExisting = true;
+    }
 
     // Done with the secondary session immediately — nothing else should
     // use it, and we don't want a lingering signed-in user sitting around.
     await signOut(secondaryAuth);
 
     // Written via the admin's own (primary) Firestore connection.
-    await setDoc(doc(db, 'users', newUid), {
-      email: cleanEmail,
-      displayName: cleanFullName,
-      role: finalRole,
-      createdAt: serverTimestamp(),
-    });
+    // merge: true so re-running this (e.g. the bulk import) never clobbers
+    // a doc that was already written correctly.
+    await setDoc(
+      doc(db, 'users', newUid),
+      {
+        email: cleanEmail,
+        displayName: cleanFullName,
+        role: finalRole,
+        createdAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
-    return { uid: newUid, email: cleanEmail, displayName: cleanFullName, role: finalRole };
+    return { uid: newUid, email: cleanEmail, displayName: cleanFullName, role: finalRole, linkedExisting };
   } finally {
     // Always tear down the temporary app instance, success or failure.
     await deleteApp(secondaryApp).catch(() => {});

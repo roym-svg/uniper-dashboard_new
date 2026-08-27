@@ -28,7 +28,11 @@ export default function CreateUserModal({ onClose, onCreated }) {
     setSubmitting(true);
     try {
       const created = await createTechnicianAccount({ email, password, fullName, role });
-      setSuccess(`המשתמש "${created.displayName}" נוצר בהצלחה`);
+      setSuccess(
+        created.linkedExisting
+          ? `המשתמש "${created.displayName}" כבר היה קיים — הקישור לפרופיל עודכן בהצלחה`
+          : `המשתמש "${created.displayName}" נוצר בהצלחה`
+      );
       setFullName('');
       setEmail('');
       setPassword('');

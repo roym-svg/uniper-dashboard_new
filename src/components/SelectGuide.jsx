@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, UserRound, ChevronRight, Boxes, UserPlus, LogOut } from 'lucide-react';
+import { Search, UserRound, ChevronRight, Boxes, UserPlus, Users, LogOut } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase.js';
 import CreateUserModal from './CreateUserModal.jsx';
+import BulkCreateModal from './BulkCreateModal.jsx';
 
 // This screen is only ever rendered for admins now — technicians are routed
 // straight to their own Dashboard by App.jsx and never see the full
@@ -11,6 +12,7 @@ import CreateUserModal from './CreateUserModal.jsx';
 export default function SelectGuide({ boxes }) {
   const [query, setQuery] = useState('');
   const [showCreateUser, setShowCreateUser] = useState(false);
+  const [showBulkCreate, setShowBulkCreate] = useState(false);
 
   const guides = useMemo(() => {
     const counts = new Map();
@@ -43,6 +45,14 @@ export default function SelectGuide({ boxes }) {
       className="min-h-screen bg-slate-50 px-6 py-16"
     >
       <div className="mx-auto flex max-w-3xl items-center justify-end gap-2">
+        <button
+          onClick={() => setShowBulkCreate(true)}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-brand/30 bg-brand/5 px-3.5 py-2 text-xs font-semibold text-brand shadow-soft transition hover:bg-brand/10"
+          title="כלי חד-פעמי לייבוא רשימת טכנאים מקובץ JSON"
+        >
+          <Users className="h-3.5 w-3.5" />
+          יצירת 23 משתמשים בלחיצה אחת
+        </button>
         <button
           onClick={() => setShowCreateUser(true)}
           className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-3.5 py-2 text-xs font-semibold text-white shadow-soft transition hover:bg-blue-700"
@@ -107,6 +117,7 @@ export default function SelectGuide({ boxes }) {
       </div>
 
       {showCreateUser && <CreateUserModal onClose={() => setShowCreateUser(false)} />}
+      {showBulkCreate && <BulkCreateModal onClose={() => setShowBulkCreate(false)} />}
     </motion.div>
   );
 }
