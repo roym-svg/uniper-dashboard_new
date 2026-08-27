@@ -1,6 +1,6 @@
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, serverTimestamp, where } from 'firebase/firestore';
 import { db, firebaseConfig } from './firebase.js';
 
 const VALID_ROLES = ['admin', 'technician'];
@@ -28,6 +28,38 @@ export async function fetchUserProfile(uid) {
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Admin-only: lists every registered technician profile from Firestore.
+ * Used by the "בדיקת התאמת שמות" (name-match verification) tool so it can
+ * compare each REGISTERED USER'S name against the raw names in the sheet —
+ * a distinct question from "which sheet names exist" (SelectGuide's own
+ * picker), since a Firestore account can exist with no matching sheet rows
+ * at all (a typo'd displayName, or a technician not yet in this week's
+ * sheet), and that's exactly the gap this tool exists to surface.
+ *
+ * Firestore's rules allow this: `allow read` on /users/{userId} covers list
+ * queries, not just get-by-id, and isAdmin() there only ever reads the
+ * CALLER's own doc — so it evaluates the same way regardless of which
+ * document is being listed, and the whole collection scan is permitted for
+ * an admin without any rule changes. See firestore.rules.
+ *
+ * Returns [] (not a throw) on any read error — same "fail safe, don't
+ * crash the admin screen over this" posture as fetchUserProfile.
+ */
+export async function listAllTechnicianUsers() {
+  try {
+    const snap = await getDocs(query(collection(db, 'users'), where('role', '==', 'technician')));
+    return snap.docs.map((d) => ({
+      uid: d.id,
+      email: d.data().email || '',
+      displayName: d.data().displayName || '',
+      role: d.data().role,
+    }));
+  } catch {
+    return [];
   }
 }
 

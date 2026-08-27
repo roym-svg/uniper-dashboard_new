@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, UserRound, ChevronRight, Boxes, UserPlus, Users, LogOut } from 'lucide-react';
+import { Search, UserRound, ChevronRight, Boxes, UserPlus, Users, ClipboardCheck, LogOut } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase.js';
 import CreateUserModal from './CreateUserModal.jsx';
 import BulkCreateModal from './BulkCreateModal.jsx';
+import NameMatchModal from './NameMatchModal.jsx';
 
 // This screen is only ever rendered for admins now — technicians are routed
 // straight to their own Dashboard by App.jsx and never see the full
@@ -13,6 +14,7 @@ export default function SelectGuide({ boxes }) {
   const [query, setQuery] = useState('');
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [showBulkCreate, setShowBulkCreate] = useState(false);
+  const [showNameMatch, setShowNameMatch] = useState(false);
 
   const guides = useMemo(() => {
     const counts = new Map();
@@ -44,7 +46,14 @@ export default function SelectGuide({ boxes }) {
       animate={{ opacity: 1 }}
       className="min-h-screen bg-slate-50 px-6 py-16"
     >
-      <div className="mx-auto flex max-w-3xl items-center justify-end gap-2">
+      <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-end gap-2">
+        <button
+          onClick={() => setShowNameMatch(true)}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-soft transition hover:bg-slate-50"
+        >
+          <ClipboardCheck className="h-3.5 w-3.5" />
+          בדיקת התאמת שמות
+        </button>
         <button
           onClick={() => setShowBulkCreate(true)}
           className="inline-flex items-center gap-1.5 rounded-xl border border-brand/30 bg-brand/5 px-3.5 py-2 text-xs font-semibold text-brand shadow-soft transition hover:bg-brand/10"
@@ -118,6 +127,7 @@ export default function SelectGuide({ boxes }) {
 
       {showCreateUser && <CreateUserModal onClose={() => setShowCreateUser(false)} />}
       {showBulkCreate && <BulkCreateModal onClose={() => setShowBulkCreate(false)} />}
+      {showNameMatch && <NameMatchModal boxes={boxes} onClose={() => setShowNameMatch(false)} />}
     </motion.div>
   );
 }

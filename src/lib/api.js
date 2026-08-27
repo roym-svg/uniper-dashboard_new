@@ -25,3 +25,48 @@ export async function fetchInventory() {
 
   return data;
 }
+
+/**
+ * Reports a device as "not actually with me" ("לא אצלי") — sends an email
+ * via the Apps Script backend's `doPost` handler (see Code.gs — a NEW
+ * function delivered alongside this change; it needs to be added to your
+ * existing Apps Script project and the web app redeployed before this will
+ * actually send anything).
+ *
+ * Uses `Content-Type: text/plain` rather than `application/json`. This
+ * isn't a typo: a browser only sends a "simple" CORS request (no preflight
+ * OPTIONS round-trip first) for a small set of content types, and
+ * `text/plain` is one of them while `application/json` is not. Apps
+ * Script's web app endpoint doesn't handle a CORS preflight request the
+ * way a normal server would, so a JSON-content-typed POST from a browser
+ * to it fails before Code.gs ever sees it. Sending the same JSON STRING
+ * with a text/plain content type avoids the preflight entirely — Code.gs
+ * still does `JSON.parse(e.postData.contents)` on the other end and gets
+ * the same structured data either way.
+ *
+ * Throws on network failure or a non-2xx / API-reported error, same as
+ * fetchInventory — callers should catch and show a message.
+ */
+export async function reportMissing({ serialNumber, guideName, reporterEmail }) {
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      action: 'reportMissing',
+      serialNumber: String(serialNumber || ''),
+      guideName: String(guideName || ''),
+      reporterEmail: String(reporterEmail || ''),
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`API request failed (HTTP ${res.status}).`);
+  }
+
+  const data = await res.json();
+  if (data && data.error) {
+    throw new Error(data.message || 'The report-missing API returned an error.');
+  }
+
+  return data;
+}

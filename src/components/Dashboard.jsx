@@ -1,16 +1,38 @@
 import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Search, ArrowLeft, Hash, LogOut } from 'lucide-react';
+import { RefreshCw, Search, ArrowLeft, Hash, LogOut, AlertTriangle, Flag, Loader2, Check } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase.js';
+import { reportMissing } from '../lib/api.js';
 import StatCards from './StatCards.jsx';
 import StatusBadge from './StatusBadge.jsx';
+
+const LOW_STOCK_THRESHOLD = 4;
+
+function timeAgoLabel(timestampMs) {
+  if (!timestampMs) return null;
+  const minutes = Math.max(0, Math.round((Date.now() - timestampMs) / 60000));
+  if (minutes < 1) return 'עודכן הרגע';
+  if (minutes < 60) return `עודכן לפני ${minutes} דקות`;
+  const hours = Math.round(minutes / 60);
+  return `עודכן לפני ${hours} ${hours === 1 ? 'שעה' : 'שעות'}`;
+}
 
 // showBackButton: false for a technician landing here directly (App.jsx
 // routes them straight to their own Dashboard) — there's no picker screen
 // for them to go back to, and hiding the arrow avoids implying there is.
-export default function Dashboard({ guideName, boxes, onRefresh, refreshing, showBackButton = true }) {
+export default function Dashboard({
+  guideName,
+  boxes,
+  onRefresh,
+  refreshing,
+  lastUpdated,
+  reporterEmail,
+  showBackButton = true,
+}) {
   const [query, setQuery] = useState('');
+  // Per-serial-number report state: 'sending' | 'sent' | 'error' | undefined.
+  const [reportState, setReportState] = useState({});
 
   const stats = useMemo(() => {
     const total = boxes.length;
@@ -19,9 +41,9 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing, sho
     const faulty = boxes.filter((b) => {
       const s = String(b.faultStatus || '');
       return (
-        s.includes('איסוף') || 
-        s.includes('ניתוק') || 
-        s.includes('תקול') || 
+        s.includes('איסוף') ||
+        s.includes('ניתוק') ||
+        s.includes('תקול') ||
         s.toLowerCase().includes('collected')
       );
     }).length;
@@ -43,6 +65,42 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing, sho
     url.searchParams.delete('guide');
     window.location.href = url.toString();
   }
+
+  async function handleReportMissing(box) {
+    const serial = box.serialNumber;
+    setReportState((prev) => ({ ...prev, [serial]: 'sending' }));
+    try {
+      await reportMissing({ serialNumber: serial, guideName, reporterEmail });
+      setReportState((prev) => ({ ...prev, [serial]: 'sent' }));
+    } catch {
+      setReportState((prev) => ({ ...prev, [serial]: 'error' }));
+    }
+  }
+
+  function ReportButton({ box }) {
+    const state = reportState[box.serialNumber];
+    if (state === 'sent') {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-good">
+          <Check className="h-3.5 w-3.5" />
+          דווח
+        </span>
+      );
+    }
+    return (
+      <button
+        onClick={() => handleReportMissing(box)}
+        disabled={state === 'sending'}
+        title="דווח שהמכשיר הזה לא נמצא אצלך בפועל"
+        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-500 transition hover:border-critical/40 hover:bg-critical/5 hover:text-critical disabled:opacity-60"
+      >
+        {state === 'sending' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Flag className="h-3.5 w-3.5" />}
+        {state === 'error' ? 'שגיאה — נסה שוב' : 'לא אצלי'}
+      </button>
+    );
+  }
+
+  const updatedLabel = timeAgoLabel(lastUpdated);
 
   return (
     <motion.div
@@ -67,14 +125,15 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing, sho
               <h1 className="text-xl font-bold text-slate-900">{guideName}</h1>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {updatedLabel && <span className="hidden text-xs text-slate-400 sm:inline">{updatedLabel}</span>}
             <button
               onClick={onRefresh}
               disabled={refreshing}
               className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white shadow-soft transition hover:bg-blue-700 disabled:opacity-60"
             >
               <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-              Refresh Data
+              רענן נתונים
             </button>
             <button
               onClick={() => signOut(auth)}
@@ -89,6 +148,16 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing, sho
 
       <main className="mx-auto max-w-6xl px-6 py-8">
         <StatCards {...stats} />
+
+        {stats.healthy <= LOW_STOCK_THRESHOLD && (
+          <div className="mt-6 flex items-start gap-3 rounded-xl border border-amber-300/60 bg-amber-500/10 px-4 py-3 text-sm text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>
+              <span className="font-semibold">מלאי נמוך:</span> נותרו רק {stats.healthy} מכשירים תקינים אצל {guideName}.
+              {stats.healthy === 0 ? ' לא נותר אף מכשיר תקין.' : ' כדאי לתאם חידוש מלאי.'}
+            </p>
+          </div>
+        )}
 
         <div className="relative mt-8 max-w-md">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -108,6 +177,7 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing, sho
                 <th className="px-5 py-3 font-medium">Serial Number</th>
                 <th className="px-5 py-3 font-medium">Technician</th>
                 <th className="px-5 py-3 font-medium">Status</th>
+                <th className="px-5 py-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
@@ -124,6 +194,9 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing, sho
                     <td className="px-5 py-3 text-slate-600">{box.guideName}</td>
                     <td className="px-5 py-3">
                       <StatusBadge status={box.faultStatus} />
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <ReportButton box={box} />
                     </td>
                   </motion.tr>
                 ))}
@@ -148,9 +221,12 @@ export default function Dashboard({ guideName, boxes, onRefresh, refreshing, sho
                     <Hash className="h-3.5 w-3.5 text-slate-400" />
                     {box.serialNumber}
                   </div>
-                  <StatusBadge status={box.faultStatus} />    
+                  <StatusBadge status={box.faultStatus} />
                 </div>
                 <p className="mt-2 text-xs text-slate-500">{box.guideName}</p>
+                <div className="mt-3">
+                  <ReportButton box={box} />
+                </div>
               </motion.div>
             ))}
           </AnimatePresence>

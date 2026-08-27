@@ -5,6 +5,7 @@ import { auth } from './lib/firebase.js';
 import { fetchUserProfile } from './lib/userProfile.js';
 import { getBoxesForName } from './lib/nameMatch.js';
 import { fetchInventory } from './lib/api.js';
+import { readInventoryCache, writeInventoryCache } from './lib/inventoryCache.js';
 import Login from './components/Login.jsx';
 import Spinner from './components/Spinner.jsx';
 import ErrorState from './components/ErrorState.jsx';
@@ -35,6 +36,7 @@ export default function App() {
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null); // ms epoch of the data currently in `boxes`
   const guideParam = getGuideParam();
 
   useEffect(() => {
@@ -65,6 +67,21 @@ export default function App() {
   }, [user]);
 
   const load = useCallback(async ({ isRefresh = false } = {}) => {
+    // A manual refresh (the "רענן נתונים" button) always hits the network
+    // and overwrites the cache — the whole point of that button is "I know
+    // this might be stale, get me the real current state." Anything else
+    // (first load, switching which technician an admin is viewing) is free
+    // to serve a still-fresh (< 1 hour) cached copy instead of re-fetching.
+    if (!isRefresh) {
+      const cached = readInventoryCache();
+      if (cached) {
+        setBoxes(cached.data);
+        setLastUpdated(cached.timestamp);
+        setStatus('ready');
+        return;
+      }
+    }
+
     isRefresh ? setRefreshing(true) : setStatus('loading');
     setError('');
     try {
@@ -76,7 +93,10 @@ export default function App() {
       }
 
       // מוודאים שתמיד נכנסת רשימה (מערך) כדי שהאפליקציה לא תקרוס
-      setBoxes(Array.isArray(data) ? data : []);
+      const rows = Array.isArray(data) ? data : [];
+      setBoxes(rows);
+      writeInventoryCache(rows);
+      setLastUpdated(Date.now());
       setStatus('ready');
     } catch (err) {
       setError(err.message || 'Something went wrong while fetching inventory.');
@@ -162,6 +182,8 @@ export default function App() {
         boxes={myBoxes}
         onRefresh={() => load({ isRefresh: true })}
         refreshing={refreshing}
+        lastUpdated={lastUpdated}
+        reporterEmail={profile.email}
         showBackButton={false}
       />
     );
@@ -177,6 +199,8 @@ export default function App() {
           boxes={adminSelectedBoxes}
           onRefresh={() => load({ isRefresh: true })}
           refreshing={refreshing}
+          lastUpdated={lastUpdated}
+          reporterEmail={profile.email}
         />
       ) : (
         <SelectGuide key="select" boxes={boxes} />
