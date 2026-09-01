@@ -12,11 +12,20 @@ import Spinner from './components/Spinner.jsx';
 import ErrorState from './components/ErrorState.jsx';
 import SelectGuide from './components/SelectGuide.jsx';
 import Dashboard from './components/Dashboard.jsx';
+import DevicesReport from './components/DevicesReport.jsx';
 
 function getGuideParam() {
   const params = new URLSearchParams(window.location.search);
   const value = params.get('guide');
   return value ? value.trim() : null;
+}
+
+// Admin-only "page" navigation, alongside ?guide= — currently only one
+// value exists ('devicesReport'), read the same lightweight way as
+// getGuideParam above rather than pulling in a router for a single tab.
+function getViewParam() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('view');
 }
 
 export default function App() {
@@ -51,6 +60,7 @@ export default function App() {
   const [ignoredNames, setIgnoredNames] = useState([]);
 
   const guideParam = getGuideParam();
+  const viewParam = getViewParam();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
@@ -236,10 +246,24 @@ export default function App() {
     );
   }
 
-  // profile.role === 'admin' from here — full navigation between technicians.
+  // profile.role === 'admin' from here — full navigation between technicians
+  // plus the admin-only "pages" (currently just Devices Report). Only this
+  // branch ever looks at viewParam, so a technician account can't reach
+  // DevicesReport just by hand-editing the URL — App.jsx never even
+  // evaluates viewParam for them, since it returns from the technician
+  // branch above before this point.
+  function backToSelectGuide() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('view');
+    url.searchParams.delete('guide');
+    window.location.href = url.toString();
+  }
+
   return (
     <AnimatePresence mode="wait">
-      {guideParam ? (
+      {viewParam === 'devicesReport' ? (
+        <DevicesReport key="devicesReport" onBack={backToSelectGuide} />
+      ) : guideParam ? (
         <Dashboard
           key="dashboard"
           guideName={guideParam}

@@ -105,3 +105,34 @@ export async function reportLowInventory({ guideName, healthyCount, threshold })
 
   return data;
 }
+
+/**
+ * Fetches the "Devices Report" tab's two headline numbers from Code.gs's
+ * getDevicesReport_ (via ?mode=devicesReport):
+ *   - devicesIn: live count from Zendesk (a custom ticket field's value)
+ *   - devicesOut: current row count in the "Unipass Inventory" sheet tab
+ *
+ * Each number can independently come back as null with a matching
+ * *Error string (e.g. devicesInError) if that one source failed — Zendesk
+ * misconfigured, sheet unreadable — WITHOUT the other one failing too.
+ * This only throws for a whole-request failure (network down, non-2xx,
+ * or the top-level { error: true } the backend returns for something that
+ * broke before it could even attempt either lookup); a partial failure is
+ * represented in the returned object, not thrown, so the caller can still
+ * show whichever number did come back.
+ */
+export async function fetchDevicesReport() {
+  const res = await fetch(`${API_URL}?mode=devicesReport`, { method: 'GET' });
+
+  if (!res.ok) {
+    throw new Error(`API request failed (HTTP ${res.status}).`);
+  }
+
+  const data = await res.json();
+
+  if (data && data.error) {
+    throw new Error(data.message || 'The devices-report API returned an error.');
+  }
+
+  return data;
+}

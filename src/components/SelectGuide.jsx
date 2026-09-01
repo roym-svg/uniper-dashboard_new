@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, UserRound, ChevronRight, Boxes, UserPlus, Users, ClipboardCheck, LogOut } from 'lucide-react';
+import { Search, UserRound, ChevronRight, Boxes, UserPlus, Users, ClipboardCheck, LogOut, BarChart3 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase.js';
 import CreateUserModal from './CreateUserModal.jsx';
@@ -40,6 +40,13 @@ export default function SelectGuide({ boxes, onHideTechnician }) {
     window.location.href = url.toString();
   }
 
+  function openDevicesReport() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('guide');
+    url.searchParams.set('view', 'devicesReport');
+    window.location.href = url.toString();
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -47,6 +54,13 @@ export default function SelectGuide({ boxes, onHideTechnician }) {
       className="min-h-screen bg-slate-50 px-6 py-16"
     >
       <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-end gap-2">
+        <button
+          onClick={openDevicesReport}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-soft transition hover:bg-slate-50"
+        >
+          <BarChart3 className="h-3.5 w-3.5" />
+          Devices Report
+        </button>
         <button
           onClick={() => setShowNameMatch(true)}
           className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 shadow-soft transition hover:bg-slate-50"

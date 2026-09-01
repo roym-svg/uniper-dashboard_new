@@ -1,7 +1,7 @@
 // ── Admin notification address ──────────────────────────────────────────
 // Every email this file sends (report-missing, low-inventory) goes here.
 // Replace with your real address before redeploying.
-const ADMIN_EMAIL = 'roy.m@uniper-care.com';
+const ADMIN_EMAIL = 'your-email@example.com';
 
 // Exact-string aliases for messy technician names as they appear in the sheet.
 // Lookup is O(1) per row — add new variants here as you find them, this
@@ -92,97 +92,210 @@ var EXCLUDED_TECHNICIANS = [
 
 var EXCLUDED_TECHNICIANS_SET = buildNameSet_(EXCLUDED_TECHNICIANS);
 
+// ── Zendesk config (Devices Report tab — "Total Devices In") ────────────
+// ZENDESK_API_TOKEN is a real credential — generate it yourself in Zendesk
+// Admin Center -> Apps and integrations -> APIs -> Zendesk API (enable
+// token access, "Add API token") and paste it here directly. Never paste
+// it into a chat message, a commit, or anywhere outside this file.
+var ZENDESK_SUBDOMAIN = 'unipercare';
+var ZENDESK_EMAIL = 'your-zendesk-agent-email@example.com'; // the agent account the API token belongs to
+var ZENDESK_API_TOKEN = 'PASTE_YOUR_ZENDESK_API_TOKEN_HERE';
+
+// The custom ticket field the warehouse team sets when a device is
+// physically received back, and the exact value/tag that marks it as
+// received. "Total Devices In" = count of tickets where this field
+// currently holds this value — the same definition as the manual report
+// this replaces.
+var ZENDESK_DEVICE_FIELD_ID = '360040218632';
+var ZENDESK_DEVICE_IN_VALUE = 'receive_equipment_back';
+
 function doGet(e) {
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName('Unipass Inventory') || ss.getSheets()[0];
+    var mode = e && e.parameter ? e.parameter.mode : '';
 
-    // Fully dynamic range — driven by the sheet's actual current size, not
-    // any fixed number of rows/technicians. getLastRow()/getLastColumn()
-    // reflect exactly how much data is really there right now, whether
-    // that's 23 technicians, 50, or 5.
-    var lastRow = sheet.getLastRow();
-    var lastCol = sheet.getLastColumn();
-    if (lastRow < 2) return jsonResponse_({ error: true, message: "הטבלה ריקה מנתונים" });
-
-    var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-
-    // איתור שורת הכותרות
-    var headerRowIndex = 0;
-    for (var i = 0; i < 5 && i < values.length; i++) {
-      if (values[i].join('').toUpperCase().indexOf('SERIAL') !== -1) {
-        headerRowIndex = i;
-        break;
-      }
+    if (mode === 'devicesReport') {
+      return jsonResponse_(getDevicesReport_());
     }
 
-    var headers = values[headerRowIndex].map(function (h) {
-      return String(h).trim().toUpperCase();
-    });
-
-    var serialIdx = headers.indexOf('SERIAL NUMBER');
-    if (serialIdx === -1) serialIdx = findColumnIndex_(headers, 'SERIAL');
-
-    var guideIdx = headers.indexOf('TECHNICIAN NAME');
-    if (guideIdx === -1) guideIdx = headers.indexOf('TECH FULL NAME');
-    if (guideIdx === -1) guideIdx = findColumnIndex_(headers, 'TECH');
-
-    // "STORAGE SPECIFIC LOCATION" appears TWICE in this sheet (confirmed via
-    // ?mode=debug: columns C and D both carry that header). Column C tracks
-    // warehouse/ops locations ("מחסן", "משרד", transfers) — column D
-    // (index 3) is the one originally specified as the status source and
-    // carries the simple "אצל המדריך" / "נאסף" values. Prefer index 3 when
-    // the header is duplicated; fall back to the first match otherwise.
-    var locationMatches = findAllColumnIndexes_(headers, 'STORAGE SPECIFIC LOCATION');
-    var locationIdx = locationMatches.indexOf(3) !== -1 ? 3 : (locationMatches.length ? locationMatches[0] : -1);
-    if (locationIdx === -1) locationIdx = findColumnIndex_(headers, 'STORAGE');
-    if (locationIdx === -1) locationIdx = findColumnIndex_(headers, 'LOCATION');
-
-    if (serialIdx === -1 || guideIdx === -1) {
-      return jsonResponse_({
-        error: true,
-        message: "שגיאה במציאת עמודות."
-      });
-    }
-
-    var records = [];
-    var seenSerials = {}; // חוסם כפילויות של ממירים
-
-    for (var r = headerRowIndex + 1; r < values.length; r++) {
-      var row = values[r];
-
-      // בדיקת מספר סריאלי וכפילויות
-      var serialValue = row[serialIdx] ? String(row[serialIdx]).trim() : '';
-      if (!serialValue || seenSerials[serialValue]) continue;
-
-      // חסימת ממירים אבודים
-      var rawLocation = locationIdx !== -1 && row[locationIdx] ? String(row[locationIdx]).trim() : '';
-      if (rawLocation.indexOf('suspected as lost') !== -1 || rawLocation.indexOf('אבוד') !== -1) continue;
-
-      // משיכת שם המדריך וניקויו (איחוד שמות כפולים/מבולגנים)
-      var rawGuide = guideIdx !== -1 && row[guideIdx] ? String(row[guideIdx]).trim() : '';
-      if (!rawGuide) continue;
-
-      var cleanGuideName = normalizeName_(GUIDE_NAME_MAP[rawGuide] || rawGuide);
-
-      // Skip only names explicitly opted out above — everyone else is
-      // included, dynamically, no matter how many distinct technicians
-      // that turns out to be.
-      if (EXCLUDED_TECHNICIANS_SET[cleanGuideName]) continue;
-
-      // הוספה לרשימה וסימון הממיר כ"נצפה"
-      seenSerials[serialValue] = true;
-      records.push({
-        serialNumber: serialValue,
-        guideName: cleanGuideName,
-        faultStatus: rawLocation || 'אצל המדריך'
-      });
-    }
-
-    return jsonResponse_(records);
+    return jsonResponse_(buildInventoryRecords_());
   } catch (err) {
-    return jsonResponse_({ error: true, message: "קריסת שרת: " + err.toString() });
+    return jsonResponse_({ error: true, message: (err && err.message) ? err.message : String(err) });
   }
+}
+
+/**
+ * Reads the "Unipass Inventory" tab and returns the same records array the
+ * app has always served from doGet — extracted into its own function so
+ * the Devices Report's "Total Devices Out" (see getDevicesReport_ below)
+ * can reuse EXACTLY this logic (same dedup, same lost-device exclusion,
+ * same name cleanup) instead of counting rows a second, subtly different
+ * way that could disagree with what every technician's own Dashboard
+ * shows. Throws on the two "expected" failure cases (empty sheet, columns
+ * not found) rather than returning an error object directly, so callers
+ * — doGet and getDevicesReport_ — each decide how to report it themselves.
+ */
+function buildInventoryRecords_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Unipass Inventory') || ss.getSheets()[0];
+
+  // Fully dynamic range — driven by the sheet's actual current size, not
+  // any fixed number of rows/technicians. getLastRow()/getLastColumn()
+  // reflect exactly how much data is really there right now, whether
+  // that's 23 technicians, 50, or 5.
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2) throw new Error("הטבלה ריקה מנתונים");
+
+  var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+
+  // איתור שורת הכותרות
+  var headerRowIndex = 0;
+  for (var i = 0; i < 5 && i < values.length; i++) {
+    if (values[i].join('').toUpperCase().indexOf('SERIAL') !== -1) {
+      headerRowIndex = i;
+      break;
+    }
+  }
+
+  var headers = values[headerRowIndex].map(function (h) {
+    return String(h).trim().toUpperCase();
+  });
+
+  var serialIdx = headers.indexOf('SERIAL NUMBER');
+  if (serialIdx === -1) serialIdx = findColumnIndex_(headers, 'SERIAL');
+
+  var guideIdx = headers.indexOf('TECHNICIAN NAME');
+  if (guideIdx === -1) guideIdx = headers.indexOf('TECH FULL NAME');
+  if (guideIdx === -1) guideIdx = findColumnIndex_(headers, 'TECH');
+
+  // "STORAGE SPECIFIC LOCATION" appears TWICE in this sheet (confirmed via
+  // ?mode=debug: columns C and D both carry that header). Column C tracks
+  // warehouse/ops locations ("מחסן", "משרד", transfers) — column D
+  // (index 3) is the one originally specified as the status source and
+  // carries the simple "אצל המדריך" / "נאסף" values. Prefer index 3 when
+  // the header is duplicated; fall back to the first match otherwise.
+  var locationMatches = findAllColumnIndexes_(headers, 'STORAGE SPECIFIC LOCATION');
+  var locationIdx = locationMatches.indexOf(3) !== -1 ? 3 : (locationMatches.length ? locationMatches[0] : -1);
+  if (locationIdx === -1) locationIdx = findColumnIndex_(headers, 'STORAGE');
+  if (locationIdx === -1) locationIdx = findColumnIndex_(headers, 'LOCATION');
+
+  if (serialIdx === -1 || guideIdx === -1) {
+    throw new Error("שגיאה במציאת עמודות.");
+  }
+
+  var records = [];
+  var seenSerials = {}; // חוסם כפילויות של ממירים
+
+  for (var r = headerRowIndex + 1; r < values.length; r++) {
+    var row = values[r];
+
+    // בדיקת מספר סריאלי וכפילויות
+    var serialValue = row[serialIdx] ? String(row[serialIdx]).trim() : '';
+    if (!serialValue || seenSerials[serialValue]) continue;
+
+    // חסימת ממירים אבודים
+    var rawLocation = locationIdx !== -1 && row[locationIdx] ? String(row[locationIdx]).trim() : '';
+    if (rawLocation.indexOf('suspected as lost') !== -1 || rawLocation.indexOf('אבוד') !== -1) continue;
+
+    // משיכת שם המדריך וניקויו (איחוד שמות כפולים/מבולגנים)
+    var rawGuide = guideIdx !== -1 && row[guideIdx] ? String(row[guideIdx]).trim() : '';
+    if (!rawGuide) continue;
+
+    var cleanGuideName = normalizeName_(GUIDE_NAME_MAP[rawGuide] || rawGuide);
+
+    // Skip only names explicitly opted out above — everyone else is
+    // included, dynamically, no matter how many distinct technicians
+    // that turns out to be.
+    if (EXCLUDED_TECHNICIANS_SET[cleanGuideName]) continue;
+
+    // הוספה לרשימה וסימון הממיר כ"נצפה"
+    seenSerials[serialValue] = true;
+    records.push({
+      serialNumber: serialValue,
+      guideName: cleanGuideName,
+      faultStatus: rawLocation || 'אצל המדריך'
+    });
+  }
+
+  return records;
+}
+
+/**
+ * Backs the "Devices Report" tab: mode=devicesReport. Combines two
+ * INDEPENDENT sources — Zendesk (devicesIn) and the sheet (devicesOut) —
+ * and deliberately keeps each one's failure isolated to itself: if
+ * Zendesk is misconfigured (e.g. the API token placeholder hasn't been
+ * filled in yet), devicesOut still comes back correctly, and vice versa.
+ * The frontend shows a small per-metric error instead of the number for
+ * whichever side failed, rather than the whole page failing.
+ */
+function getDevicesReport_() {
+  var devicesOut = null;
+  var devicesOutError = null;
+  try {
+    devicesOut = buildInventoryRecords_().length;
+  } catch (err) {
+    devicesOutError = (err && err.message) ? err.message : String(err);
+  }
+
+  var devicesIn = null;
+  var devicesInError = null;
+  try {
+    devicesIn = fetchZendeskDeviceInCount_();
+  } catch (err) {
+    devicesInError = (err && err.message) ? err.message : String(err);
+  }
+
+  return {
+    devicesIn: devicesIn,
+    devicesInError: devicesInError,
+    devicesOut: devicesOut,
+    devicesOutError: devicesOutError,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Uses Zendesk's search/count endpoint — GET /api/v2/search/count.json —
+ * to count tickets whose ZENDESK_DEVICE_FIELD_ID custom field currently
+ * holds ZENDESK_DEVICE_IN_VALUE. That endpoint returns just {"count": N},
+ * no pagination needed no matter how many tickets match, and no ticket
+ * data beyond the count is fetched or stored.
+ *
+ * Auth: Zendesk API token auth is "{agent email}/token:{api token}" as
+ * HTTP Basic Auth — NOT the agent's actual password.
+ */
+function fetchZendeskDeviceInCount_() {
+  if (!ZENDESK_API_TOKEN || ZENDESK_API_TOKEN === 'PASTE_YOUR_ZENDESK_API_TOKEN_HERE') {
+    throw new Error('Zendesk API token לא הוגדר (ZENDESK_API_TOKEN ב-Code.gs).');
+  }
+  if (!ZENDESK_EMAIL || ZENDESK_EMAIL === 'your-zendesk-agent-email@example.com') {
+    throw new Error('Zendesk agent email לא הוגדר (ZENDESK_EMAIL ב-Code.gs).');
+  }
+
+  var query = 'type:ticket custom_field_' + ZENDESK_DEVICE_FIELD_ID + ':' + ZENDESK_DEVICE_IN_VALUE;
+  var url = 'https://' + ZENDESK_SUBDOMAIN + '.zendesk.com/api/v2/search/count.json?query=' + encodeURIComponent(query);
+  var authHeader = 'Basic ' + Utilities.base64Encode(ZENDESK_EMAIL + '/token:' + ZENDESK_API_TOKEN);
+
+  var response = UrlFetchApp.fetch(url, {
+    method: 'get',
+    headers: { Authorization: authHeader },
+    muteHttpExceptions: true // so a 401/403/etc comes back as a normal response we can read, not a thrown exception with a less useful message
+  });
+
+  var statusCode = response.getResponseCode();
+  var body = response.getContentText();
+
+  if (statusCode < 200 || statusCode >= 300) {
+    throw new Error('Zendesk API החזיר שגיאה (HTTP ' + statusCode + '): ' + body);
+  }
+
+  var data = JSON.parse(body);
+  if (typeof data.count !== 'number') {
+    throw new Error('תגובת Zendesk לא בפורמט הצפוי: ' + body);
+  }
+
+  return data.count;
 }
 
 // ── POST handler: report-missing + low-inventory email notifications ────
