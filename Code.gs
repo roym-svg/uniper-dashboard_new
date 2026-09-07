@@ -103,11 +103,25 @@ var ZENDESK_API_TOKEN = 'PASTE_YOUR_ZENDESK_API_TOKEN_HERE';
 
 // The custom ticket field the warehouse team sets when a device is
 // physically received back, and the exact value/tag that marks it as
-// received. "Total Devices In" = count of tickets where this field
-// currently holds this value — the same definition as the manual report
-// this replaces.
+// received. "Devices In" for a given month = count of tickets where this
+// field currently holds this value AND the ticket's updated_at falls in
+// that month (see fetchZendeskDeviceInCountForMonth_'s doc comment for the
+// caveat on using updated_at as the proxy for "when this happened").
 var ZENDESK_DEVICE_FIELD_ID = '360040218632';
 var ZENDESK_DEVICE_IN_VALUE = 'receive_equipment_back';
+
+// ── Devices Report: monthly range ────────────────────────────────────────
+// The report starts here and has NO data before it — the "Unipass
+// Inventory" sheet's technician-name column gets overwritten with the
+// customer's name once a device is installed, so there is no reliable way
+// to reconstruct which month any device left the warehouse before the
+// "Devices Out Log" tab (below) started actually recording it. Change
+// this only if you want to move the start date forward; there is nothing
+// to backfill for months before whenever the log first started running.
+var DEVICES_REPORT_START_YEAR = 2026;
+var DEVICES_REPORT_START_MONTH = 9; // September, 1-indexed
+
+var DEVICES_OUT_LOG_SHEET_NAME = 'Devices Out Log';
 
 function doGet(e) {
   try {
@@ -124,40 +138,30 @@ function doGet(e) {
 }
 
 /**
- * Reads the "Unipass Inventory" tab and returns the same records array the
- * app has always served from doGet — extracted into its own function so
- * the Devices Report's "Total Devices Out" (see getDevicesReport_ below)
- * can reuse EXACTLY this logic (same dedup, same lost-device exclusion,
- * same name cleanup) instead of counting rows a second, subtly different
- * way that could disagree with what every technician's own Dashboard
- * shows. Throws on the two "expected" failure cases (empty sheet, columns
- * not found) rather than returning an error object directly, so callers
- * — doGet and getDevicesReport_ — each decide how to report it themselves.
+ * Locates the SERIAL / TECHNICIAN NAME / STORAGE-LOCATION columns (and the
+ * header row) on `sheet`, using the same header-matching rules the app has
+ * always used. Returns null if the two required columns (serial, guide)
+ * can't be found. Shared by buildInventoryRecords_ (reading the whole
+ * table) and onEdit (below — reacting to a single edited cell), so both
+ * stay in sync automatically if the sheet's column layout ever changes.
  */
-function buildInventoryRecords_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('Unipass Inventory') || ss.getSheets()[0];
-
-  // Fully dynamic range — driven by the sheet's actual current size, not
-  // any fixed number of rows/technicians. getLastRow()/getLastColumn()
-  // reflect exactly how much data is really there right now, whether
-  // that's 23 technicians, 50, or 5.
+function findInventoryColumns_(sheet) {
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
-  if (lastRow < 2) throw new Error("הטבלה ריקה מנתונים");
+  if (lastRow < 1 || lastCol < 1) return null;
 
-  var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var headerScanRows = Math.min(5, lastRow);
+  var headerValues = sheet.getRange(1, 1, headerScanRows, lastCol).getValues();
 
-  // איתור שורת הכותרות
   var headerRowIndex = 0;
-  for (var i = 0; i < 5 && i < values.length; i++) {
-    if (values[i].join('').toUpperCase().indexOf('SERIAL') !== -1) {
+  for (var i = 0; i < headerValues.length; i++) {
+    if (headerValues[i].join('').toUpperCase().indexOf('SERIAL') !== -1) {
       headerRowIndex = i;
       break;
     }
   }
 
-  var headers = values[headerRowIndex].map(function (h) {
+  var headers = headerValues[headerRowIndex].map(function (h) {
     return String(h).trim().toUpperCase();
   });
 
@@ -179,9 +183,38 @@ function buildInventoryRecords_() {
   if (locationIdx === -1) locationIdx = findColumnIndex_(headers, 'STORAGE');
   if (locationIdx === -1) locationIdx = findColumnIndex_(headers, 'LOCATION');
 
-  if (serialIdx === -1 || guideIdx === -1) {
-    throw new Error("שגיאה במציאת עמודות.");
-  }
+  if (serialIdx === -1 || guideIdx === -1) return null;
+
+  return { headerRowIndex: headerRowIndex, serialIdx: serialIdx, guideIdx: guideIdx, locationIdx: locationIdx };
+}
+
+/**
+ * Reads the "Unipass Inventory" tab and returns the same records array the
+ * app has always served from doGet. Throws on the two "expected" failure
+ * cases (empty sheet, columns not found) rather than returning an error
+ * object directly, so callers — doGet and getDevicesReport_ — each decide
+ * how to report it themselves.
+ */
+function buildInventoryRecords_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Unipass Inventory') || ss.getSheets()[0];
+
+  // Fully dynamic range — driven by the sheet's actual current size, not
+  // any fixed number of rows/technicians. getLastRow()/getLastColumn()
+  // reflect exactly how much data is really there right now, whether
+  // that's 23 technicians, 50, or 5.
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2) throw new Error("הטבלה ריקה מנתונים");
+
+  var cols = findInventoryColumns_(sheet);
+  if (!cols) throw new Error("שגיאה במציאת עמודות.");
+
+  var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var headerRowIndex = cols.headerRowIndex;
+  var serialIdx = cols.serialIdx;
+  var guideIdx = cols.guideIdx;
+  var locationIdx = cols.locationIdx;
 
   var records = [];
   var seenSerials = {}; // חוסם כפילויות של ממירים
@@ -220,52 +253,203 @@ function buildInventoryRecords_() {
   return records;
 }
 
+// ── Devices Out Log: append-only, written by the onEdit trigger below ───
+
 /**
- * Backs the "Devices Report" tab: mode=devicesReport. Combines two
- * INDEPENDENT sources — Zendesk (devicesIn) and the sheet (devicesOut) —
- * and deliberately keeps each one's failure isolated to itself: if
- * Zendesk is misconfigured (e.g. the API token placeholder hasn't been
- * filled in yet), devicesOut still comes back correctly, and vice versa.
- * The frontend shows a small per-metric error instead of the number for
- * whichever side failed, rather than the whole page failing.
+ * Returns the "Devices Out Log" tab, creating it (with a header row) the
+ * first time it's needed. Columns: Timestamp | Serial Number | Technician
+ * Name — deliberately minimal; this tab is a log, not something anyone is
+ * meant to hand-edit.
  */
-function getDevicesReport_() {
-  var devicesOut = null;
-  var devicesOutError = null;
-  try {
-    devicesOut = buildInventoryRecords_().length;
-  } catch (err) {
-    devicesOutError = (err && err.message) ? err.message : String(err);
+function getOrCreateDevicesOutLogSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(DEVICES_OUT_LOG_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(DEVICES_OUT_LOG_SHEET_NAME);
+    sheet.getRange(1, 1, 1, 3).setValues([['Timestamp', 'Serial Number', 'Technician Name']]);
+    sheet.setFrozenRows(1);
   }
-
-  var devicesIn = null;
-  var devicesInError = null;
-  try {
-    devicesIn = fetchZendeskDeviceInCount_();
-  } catch (err) {
-    devicesInError = (err && err.message) ? err.message : String(err);
-  }
-
-  return {
-    devicesIn: devicesIn,
-    devicesInError: devicesInError,
-    devicesOut: devicesOut,
-    devicesOutError: devicesOutError,
-    updatedAt: new Date().toISOString()
-  };
+  return sheet;
 }
 
 /**
- * Uses Zendesk's search/count endpoint — GET /api/v2/search/count.json —
- * to count tickets whose ZENDESK_DEVICE_FIELD_ID custom field currently
- * holds ZENDESK_DEVICE_IN_VALUE. That endpoint returns just {"count": N},
- * no pagination needed no matter how many tickets match, and no ticket
- * data beyond the count is fetched or stored.
+ * Installable-free "simple trigger" — Apps Script recognizes a function
+ * literally named onEdit(e) and runs it automatically on every manual edit
+ * to this spreadsheet, with no separate setup needed in the Triggers menu.
  *
- * Auth: Zendesk API token auth is "{agent email}/token:{api token}" as
- * HTTP Basic Auth — NOT the agent's actual password.
+ * Fires a new "device out" log entry the moment a row's TECHNICIAN NAME
+ * cell goes from EMPTY to a real name — confirmed to be the ONLY way that
+ * cell is ever populated (it is later overwritten with the customer's name
+ * once installed, but never blanked-then-refilled without a genuine new
+ * assignment in between, per how the warehouse actually uses this sheet).
+ * That overwrite is exactly why we can't read "out" dates back out of this
+ * sheet after the fact — this trigger is what captures the moment before
+ * it's lost.
+ *
+ * Deliberately tolerant of multi-cell edits (e.g. pasting several new rows
+ * at once) — e.oldValue is only available for single-cell edits, so
+ * instead of diffing old-vs-new, this checks every touched row's CURRENT
+ * technician-name value against the most recent thing already logged for
+ * that serial number, and only logs when it's genuinely different (or
+ * nothing has been logged for that serial yet). That naturally handles a
+ * device being re-issued to a different technician later as a second,
+ * legitimate "out" event, while not re-logging an edit that happens to
+ * re-touch a cell without actually changing its value.
  */
-function fetchZendeskDeviceInCount_() {
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+
+    var sheet = e.range.getSheet();
+    if (sheet.getName() !== 'Unipass Inventory') return;
+
+    var cols = findInventoryColumns_(sheet);
+    if (!cols) return; // couldn't find columns — bail quietly, never break the user's edit
+
+    var guideCol1Indexed = cols.guideIdx + 1; // sheet ranges are 1-indexed; cols.* are 0-indexed
+    var editedCol = e.range.getColumn();
+    var editedLastCol = e.range.getLastColumn();
+    if (editedLastCol < guideCol1Indexed || editedCol > guideCol1Indexed) return; // edit didn't touch the technician-name column at all
+
+    var headerRow1Indexed = cols.headerRowIndex + 1;
+    var firstDataRow = Math.max(e.range.getRow(), headerRow1Indexed + 1);
+    var lastDataRow = e.range.getLastRow();
+
+    for (var row = firstDataRow; row <= lastDataRow; row++) {
+      var serialValue = String(sheet.getRange(row, cols.serialIdx + 1).getValue() || '').trim();
+      var guideValue = String(sheet.getRange(row, guideCol1Indexed).getValue() || '').trim();
+      if (!serialValue || !guideValue) continue; // nothing to log yet for this row
+
+      logDeviceOutIfNew_(serialValue, guideValue);
+    }
+  } catch (err) {
+    // Never let a logging failure block the person's actual edit to the
+    // sheet — just record it so it's visible if the log ever looks wrong.
+    Logger.log('onEdit device-out logging failed: ' + err);
+  }
+}
+
+/**
+ * Appends one row to the Devices Out Log UNLESS the most recent existing
+ * entry for this exact serial number already has this exact technician
+ * name (meaning this specific assignment is already recorded — nothing
+ * new happened). Scans the log tab's existing rows each call; fine at the
+ * volume this log is expected to see, but if it ever grows very large and
+ * this starts feeling slow, the fix is a cached last-seen-per-serial index
+ * (e.g. in Script Properties) rather than a full scan — not needed yet.
+ */
+function logDeviceOutIfNew_(serialValue, guideValue) {
+  var sheet = getOrCreateDevicesOutLogSheet_();
+  var lastRow = sheet.getLastRow();
+
+  if (lastRow >= 2) {
+    var existing = sheet.getRange(2, 2, lastRow - 1, 2).getValues(); // [serial, technicianName] pairs
+    for (var i = existing.length - 1; i >= 0; i--) {
+      if (String(existing[i][0]).trim() === serialValue) {
+        if (String(existing[i][1]).trim() === guideValue) return; // already logged, nothing new
+        break; // most recent entry for this serial had a DIFFERENT technician — genuinely new "out" event, fall through and log
+      }
+    }
+  }
+
+  sheet.appendRow([new Date(), serialValue, guideValue]);
+}
+
+/**
+ * Reads every row out of the Devices Out Log as { timestamp, serial,
+ * guideName } objects, skipping anything whose Timestamp cell isn't
+ * actually a Date (guards against a stray hand-edited row).
+ */
+function readDevicesOutLogRows_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+
+  var values = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  var rows = [];
+  for (var i = 0; i < values.length; i++) {
+    var ts = values[i][0];
+    if (!(ts instanceof Date)) continue;
+    rows.push({ timestamp: ts, serial: String(values[i][1] || ''), guideName: String(values[i][2] || '') });
+  }
+  return rows;
+}
+
+// ── Devices Report: monthly In/Out/Diff ──────────────────────────────────
+
+/**
+ * Builds the list of calendar months from DEVICES_REPORT_START_YEAR/MONTH
+ * through the current month (inclusive) — the current month is naturally
+ * partial (whatever's happened so far), which is fine, it just fills in
+ * further as the month goes on.
+ */
+function buildReportMonthList_() {
+  var now = new Date();
+  var endYear = now.getFullYear();
+  var endMonth = now.getMonth() + 1; // 1-indexed
+
+  var months = [];
+  var y = DEVICES_REPORT_START_YEAR;
+  var m = DEVICES_REPORT_START_MONTH;
+
+  while (y < endYear || (y === endYear && m <= endMonth)) {
+    var rangeStart = new Date(y, m - 1, 1);
+    var rangeEndExclusive = (m === 12) ? new Date(y + 1, 0, 1) : new Date(y, m, 1);
+    months.push({
+      year: y,
+      month: m,
+      label: y + '-' + (m < 10 ? '0' + m : String(m)),
+      rangeStart: rangeStart,
+      rangeEndExclusive: rangeEndExclusive
+    });
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+
+  return months;
+}
+
+function countDevicesOutForMonth_(logRows, month) {
+  var count = 0;
+  for (var i = 0; i < logRows.length; i++) {
+    var ts = logRows[i].timestamp;
+    if (ts >= month.rangeStart && ts < month.rangeEndExclusive) count += 1;
+  }
+  return count;
+}
+
+function formatDateForZendesk_(date) {
+  var y = date.getFullYear();
+  var m = date.getMonth() + 1;
+  var d = date.getDate();
+  return y + '-' + (m < 10 ? '0' + m : String(m)) + '-' + (d < 10 ? '0' + d : String(d));
+}
+
+function addDays_(date, days) {
+  var d = new Date(date.getTime());
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+/**
+ * Counts Zendesk tickets whose ZENDESK_DEVICE_FIELD_ID field holds
+ * ZENDESK_DEVICE_IN_VALUE, restricted to `month` via the ticket's
+ * updated_at. Uses only `>` / `<` (not `>=`/`<=`, which aren't part of
+ * Zendesk's documented search operators) — the lower bound is the day
+ * BEFORE the month starts and the upper bound is the first day of the
+ * NEXT month, so `updated>lowerBound updated<upperBound` covers the whole
+ * calendar month exactly.
+ *
+ * CAVEAT (documented, not hidden): updated_at is the ticket's last-touched
+ * time, not specifically "when this field became this value" — Zendesk's
+ * search API doesn't expose per-field change history. If a ticket gets
+ * touched again afterward (a comment, an unrelated tag) after being
+ * marked received, it can drift into a later month than when the device
+ * actually came back. Workable as a proxy, not perfectly exact.
+ */
+function fetchZendeskDeviceInCountForMonth_(month) {
   if (!ZENDESK_API_TOKEN || ZENDESK_API_TOKEN === 'PASTE_YOUR_ZENDESK_API_TOKEN_HERE') {
     throw new Error('Zendesk API token לא הוגדר (ZENDESK_API_TOKEN ב-Code.gs).');
   }
@@ -273,7 +457,12 @@ function fetchZendeskDeviceInCount_() {
     throw new Error('Zendesk agent email לא הוגדר (ZENDESK_EMAIL ב-Code.gs).');
   }
 
-  var query = 'type:ticket custom_field_' + ZENDESK_DEVICE_FIELD_ID + ':' + ZENDESK_DEVICE_IN_VALUE;
+  var lowerBoundExclusive = addDays_(month.rangeStart, -1);
+  var query =
+    'type:ticket custom_field_' + ZENDESK_DEVICE_FIELD_ID + ':' + ZENDESK_DEVICE_IN_VALUE +
+    ' updated>' + formatDateForZendesk_(lowerBoundExclusive) +
+    ' updated<' + formatDateForZendesk_(month.rangeEndExclusive);
+
   var url = 'https://' + ZENDESK_SUBDOMAIN + '.zendesk.com/api/v2/search/count.json?query=' + encodeURIComponent(query);
   var authHeader = 'Basic ' + Utilities.base64Encode(ZENDESK_EMAIL + '/token:' + ZENDESK_API_TOKEN);
 
@@ -296,6 +485,67 @@ function fetchZendeskDeviceInCount_() {
   }
 
   return data.count;
+}
+
+/**
+ * Backs the "Devices Report" tab: mode=devicesReport. Returns one row per
+ * calendar month from DEVICES_REPORT_START_YEAR/MONTH through the current
+ * month, each with devicesIn (Zendesk), devicesOut (the log tab), and
+ * diff = devicesIn - devicesOut for THAT month specifically (not a running
+ * cumulative balance — a positive diff means more came back than went out
+ * that month, negative means the reverse).
+ *
+ * Each month's two numbers fail independently of each other AND of every
+ * other month's — one bad Zendesk call for August doesn't take down
+ * September's numbers, and a sheet-read problem doesn't take down Zendesk.
+ */
+function getDevicesReport_() {
+  var months = buildReportMonthList_();
+
+  var logRows;
+  var logReadError = null;
+  try {
+    logRows = readDevicesOutLogRows_(getOrCreateDevicesOutLogSheet_());
+  } catch (err) {
+    logRows = [];
+    logReadError = (err && err.message) ? err.message : String(err);
+  }
+
+  var result = [];
+  for (var i = 0; i < months.length; i++) {
+    var month = months[i];
+
+    var devicesOut = null;
+    var devicesOutError = logReadError;
+    if (!logReadError) {
+      try {
+        devicesOut = countDevicesOutForMonth_(logRows, month);
+      } catch (err) {
+        devicesOutError = (err && err.message) ? err.message : String(err);
+      }
+    }
+
+    var devicesIn = null;
+    var devicesInError = null;
+    try {
+      devicesIn = fetchZendeskDeviceInCountForMonth_(month);
+    } catch (err) {
+      devicesInError = (err && err.message) ? err.message : String(err);
+    }
+
+    var diff = (devicesIn !== null && devicesOut !== null) ? (devicesIn - devicesOut) : null;
+
+    result.push({
+      month: month.label,
+      devicesIn: devicesIn,
+      devicesInError: devicesInError,
+      devicesOut: devicesOut,
+      devicesOutError: devicesOutError,
+      diff: diff
+    });
+  }
+
+  return { months: result, updatedAt: new Date().toISOString() };
 }
 
 // ── POST handler: report-missing + low-inventory email notifications ────
@@ -366,13 +616,6 @@ function handleReportMissing_(payload) {
  * (<= 4, matching Dashboard.jsx's LOW_STOCK_THRESHOLD) or below. Expects
  * { guideName, healthyCount } in the payload; threshold is optional and
  * defaults to 4 for the email text if not provided.
- *
- * NOTE: as of this file, nothing on the frontend actually calls this
- * action yet — Dashboard.jsx currently only shows the low-stock banner
- * client-side. Wire up a fetch() call (mirroring reportMissing() in
- * api.js) from wherever you want this email actually triggered — e.g.
- * once, when the banner first appears for a technician — if you want
- * these emails to start sending.
  */
 function handleLowInventory_(payload) {
   var guideName = String(payload.guideName || '').trim();

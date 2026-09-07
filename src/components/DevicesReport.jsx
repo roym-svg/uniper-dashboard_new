@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, ArrowDownCircle, ArrowUpCircle, RefreshCw, AlertTriangle, Loader2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { fetchDevicesReport } from '../lib/api.js';
 
 function timeLabel(iso) {
@@ -12,21 +12,36 @@ function timeLabel(iso) {
   }
 }
 
-// Admin-only report page — "Devices Report" — comparing two independently
-// sourced numbers side by side:
-//   - Total Devices In: live from Zendesk (Code.gs's
-//     fetchZendeskDeviceInCount_ — counts tickets whose configured custom
-//     field currently holds the "received back at the warehouse" value).
-//   - Total Devices Out: the current row count in the same "Unipass
-//     Inventory" sheet tab the rest of the app reads — i.e. how many
-//     devices are presently assigned to a technician right now, using the
-//     exact same counting logic (dedup, lost-device exclusion) as
-//     everywhere else in the app.
+// Converts a "YYYY-MM" month key (as returned by Code.gs's
+// buildReportMonthList_) into a localized Hebrew "MMMM YYYY"-style label,
+// e.g. "2026-09" -> "ספטמבר 2026".
+function monthLabel(monthKey) {
+  if (!monthKey) return monthKey;
+  const [year, month] = monthKey.split('-').map(Number);
+  if (!year || !month) return monthKey;
+  try {
+    return new Date(year, month - 1, 1).toLocaleDateString('he-IL', {
+      month: 'long',
+      year: 'numeric',
+    });
+  } catch {
+    return monthKey;
+  }
+}
+
+// Admin-only report page — "Devices Report" — a month-by-month breakdown of
+// devices leaving the warehouse ("Devices Out", logged going forward via
+// Code.gs's onEdit trigger into the new "Devices Out Log" tab) against
+// devices returned ("Devices In", live from Zendesk — tickets whose
+// configured custom field currently holds the "received back at the
+// warehouse" value, bucketed by the ticket's updated_at timestamp).
 //
-// These two numbers are NOT guaranteed to reconcile into one grand total
-// — a device can be lost, retired, or logged differently in each system —
-// this page shows them side by side as-is rather than forcing a
-// difference/balance figure that could be misleading.
+// The report starts in September 2026: no historical "Devices Out" data
+// exists before the log tab was created (the sheet's technician-name column
+// gets overwritten once a device is installed at a customer, so nothing
+// before "now" can be reconstructed). Each month's In/Out/Diff numbers can
+// independently fail (e.g. Zendesk misconfigured) without breaking the rest
+// of the table — see MetricCell below.
 export default function DevicesReport({ onBack }) {
   const [report, setReport] = useState(null); // null = never loaded yet
   const [error, setError] = useState('');
@@ -52,6 +67,7 @@ export default function DevicesReport({ onBack }) {
   }, [load]);
 
   const updatedLabel = timeLabel(report?.updatedAt);
+  const months = report?.months || [];
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="min-h-screen bg-slate-50 pb-16">
@@ -85,6 +101,12 @@ export default function DevicesReport({ onBack }) {
       </header>
 
       <main className="mx-auto max-w-4xl px-6 py-10">
+        <p className="mb-6 flex items-start gap-2 rounded-xl bg-brand/5 px-4 py-3 text-sm text-slate-600">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+          הדוח מתחיל בספטמבר 2026 — אין נתוני "יצא" היסטוריים לפני התאריך הזה, מכיוון שעמודת שם המדריך בטבלה
+          נדרסת ברגע שהמכשיר מותקן אצל הלקוח. החל מספטמבר, כל מכשיר שיוצא לטכנאי נרשם אוטומטית ביומן ייעודי.
+        </p>
+
         {loading && (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-400">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -99,26 +121,42 @@ export default function DevicesReport({ onBack }) {
           </p>
         )}
 
-        {!loading && report && (
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <StatBlock
-              label="Total Devices In"
-              sublabel="נתון חי מ-Zendesk — מכשירים שהתקבלו חזרה במחסן"
-              value={report.devicesIn}
-              error={report.devicesInError}
-              icon={ArrowDownCircle}
-              accent="text-good"
-              bg="bg-good/10"
-            />
-            <StatBlock
-              label="Total Devices Out"
-              sublabel='שורות בטאב "Unipass Inventory" — מכשירים אצל טכנאים כרגע'
-              value={report.devicesOut}
-              error={report.devicesOutError}
-              icon={ArrowUpCircle}
-              accent="text-brand"
-              bg="bg-brand/10"
-            />
+        {!loading && !error && report && (
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-soft">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-right">
+                  <th className="px-5 py-3 font-semibold text-slate-600">חודש</th>
+                  <th className="px-5 py-3 font-semibold text-slate-600">Total Devices In</th>
+                  <th className="px-5 py-3 font-semibold text-slate-600">Total Devices Out</th>
+                  <th className="px-5 py-3 font-semibold text-slate-600">הפרש</th>
+                </tr>
+              </thead>
+              <tbody>
+                {months.map((row) => (
+                  <tr key={row.month} className="border-b border-slate-100 text-right last:border-0">
+                    <td className="px-5 py-3 font-medium text-slate-900">{monthLabel(row.month)}</td>
+                    <td className="px-5 py-3">
+                      <MetricCell value={row.devicesIn} error={row.devicesInError} />
+                    </td>
+                    <td className="px-5 py-3">
+                      <MetricCell value={row.devicesOut} error={row.devicesOutError} />
+                    </td>
+                    <td className="px-5 py-3">
+                      <DiffCell diff={row.diff} />
+                    </td>
+                  </tr>
+                ))}
+
+                {months.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-5 py-8 text-center text-sm text-slate-400">
+                      אין נתונים להצגה.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         )}
       </main>
@@ -126,31 +164,33 @@ export default function DevicesReport({ onBack }) {
   );
 }
 
-function StatBlock({ label, sublabel, value, error, icon: Icon, accent, bg }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft"
-    >
-      <div className="flex items-center gap-3">
-        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg}`}>
-          <Icon className={`h-5 w-5 ${accent}`} />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{label}</p>
-          <p className="text-xs text-slate-400">{sublabel}</p>
-        </div>
-      </div>
+// Shows the numeric value, or — when this specific cell's source failed
+// (e.g. Zendesk misconfigured for this month, or the log tab unreadable) —
+// a small red "שגיאה" badge carrying the actual error string in a tooltip,
+// without blocking any other cell in the table from rendering normally.
+function MetricCell({ value, error }) {
+  if (error) {
+    return (
+      <span
+        title={error}
+        className="inline-flex cursor-help items-center gap-1 rounded-md bg-critical/10 px-2 py-0.5 text-xs font-semibold text-critical"
+      >
+        <AlertTriangle className="h-3 w-3" />
+        שגיאה
+      </span>
+    );
+  }
+  return <span className="tabular-nums text-slate-900">{value ?? '—'}</span>;
+}
 
-      {error ? (
-        <p className="mt-4 flex items-start gap-1.5 text-xs font-medium text-critical">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {error}
-        </p>
-      ) : (
-        <p className="mt-4 text-4xl font-bold tabular-nums text-slate-900">{value ?? '—'}</p>
-      )}
-    </motion.div>
-  );
+// Point-in-time monthly diff (In − Out for that specific month, not a
+// running balance): green for a positive diff, red for negative, slate for
+// zero or when either side is missing.
+function DiffCell({ diff }) {
+  if (diff === null || diff === undefined) {
+    return <span className="tabular-nums text-slate-400">—</span>;
+  }
+  const color = diff > 0 ? 'text-good' : diff < 0 ? 'text-critical' : 'text-slate-500';
+  const sign = diff > 0 ? '+' : '';
+  return <span className={`tabular-nums font-semibold ${color}`}>{sign}{diff}</span>;
 }
