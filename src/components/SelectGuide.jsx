@@ -20,13 +20,23 @@ export default function SelectGuide({ boxes, onHideTechnician }) {
     const counts = new Map();
     boxes.forEach((box) => {
       const name = (box.guideName || '').trim();
-      if (!name) return;
+      // Skip blank names AND placeholder values like "-" that show up in the
+      // sheet for boxes with no technician actually assigned — these aren't
+      // a real technician, so they shouldn't get their own confusing card
+      // (this was the "-" / 2222 קופסאות card Roy flagged). A name only
+      // counts as real if it contains at least one letter or digit.
+      if (!name || !/[\p{L}\p{N}]/u.test(name)) return;
       counts.set(name, (counts.get(name) || 0) + 1);
     });
     return Array.from(counts.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [boxes]);
+
+  // Sum across only the real technicians above (never the filtered-out
+  // placeholder rows) — shown as one clear "total" line instead of Roy
+  // having to add up individual cards himself.
+  const totalBoxes = useMemo(() => guides.reduce((sum, g) => sum + g.count, 0), [guides]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -98,6 +108,9 @@ export default function SelectGuide({ boxes, onHideTechnician }) {
         </div>
         <h1 className="text-3xl font-bold tracking-tight text-slate-900">Uniper Inventory</h1>
         <p className="mt-2 text-slate-500">Select your name to view your set-top boxes.</p>
+        <p className="mt-3 text-sm font-semibold text-slate-600">
+          סך הכל אצל מדריכים: <span className="text-brand">{totalBoxes}</span> קופסאות
+        </p>
 
         <div className="relative mx-auto mt-8 max-w-md">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />

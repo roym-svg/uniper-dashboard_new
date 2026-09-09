@@ -32,9 +32,11 @@ function monthLabel(monthKey) {
 // Admin-only report page — "Devices Report" — a month-by-month breakdown of
 // devices leaving the warehouse ("Devices Out", logged going forward via
 // Code.gs's onEdit trigger into the new "Devices Out Log" tab) against
-// devices returned ("Devices In", live from Zendesk — tickets whose
-// configured custom field currently holds the "received back at the
-// warehouse" value, bucketed by the ticket's updated_at timestamp).
+// devices returned ("Devices In", live from Zendesk — matches Roy's own
+// "SHLOMI RECIVED BACK" Explore report exactly: tickets on the "IL -
+// Disconnect from the service" form, with "Agent (IL)" = Shlomi, status
+// Solved or Closed, bucketed by the ticket's updated_at timestamp — see
+// Code.gs's fetchZendeskDeviceInCountForMonth_ for the full rationale).
 //
 // The report starts in September 2026: no historical "Devices Out" data
 // exists before the log tab was created (the sheet's technician-name column
@@ -117,6 +119,13 @@ export default function DevicesReport({ onBack }) {
           נדרסת ברגע שהמכשיר מותקן אצל הלקוח. החל מספטמבר, כל מכשיר שיוצא לטכנאי נרשם אוטומטית ביומן ייעודי.
         </p>
 
+        {months.some((m) => m.partialStart) && (
+          <p className="mb-6 text-xs text-slate-400">
+            * החודש הראשון בטבלה סופר רק מה-{months.find((m) => m.partialStart)?.startDay} לחודש ואילך — זה התאריך
+            שבו התחלנו לרשום את יומן "מכשירים שיצאו", כך שספירת ה"נכנס" מוגבלת לאותו טווח כדי שההשוואה תהיה הוגנת.
+          </p>
+        )}
+
         {loading && (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-400">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -145,7 +154,10 @@ export default function DevicesReport({ onBack }) {
               <tbody>
                 {months.map((row) => (
                   <tr key={row.month} className="border-b border-slate-100 text-right last:border-0">
-                    <td className="px-5 py-3 font-medium text-slate-900">{monthLabel(row.month)}</td>
+                    <td className="px-5 py-3 font-medium text-slate-900">
+                      {monthLabel(row.month)}
+                      {row.partialStart && <span className="text-slate-400"> *</span>}
+                    </td>
                     <td className="px-5 py-3">
                       <MetricCell value={row.devicesIn} error={row.devicesInError} />
                     </td>
