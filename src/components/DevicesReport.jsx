@@ -66,6 +66,16 @@ export default function DevicesReport({ onBack }) {
     load();
   }, [load]);
 
+  // Hourly auto-refresh, matching the rest of the app (App.jsx's inventory
+  // load) — re-pulls Zendesk + the log tab every hour on its own, on top of
+  // the manual "רענן" button.
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      load({ isRefresh: true });
+    }, 60 * 60 * 1000); // 1 hour
+    return () => clearInterval(intervalId);
+  }, [load]);
+
   const updatedLabel = timeLabel(report?.updatedAt);
   const months = report?.months || [];
 

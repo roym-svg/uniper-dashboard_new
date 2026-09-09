@@ -11,3 +11,7 @@ scripts/serviceAccountKey.json
 # in the same way as the service account key, but there's no reason for it
 # to sit in git history either — see RBAC_SETUP.md for how it's used.
 scripts/technicians.json
+
+# Same rationale as technicians.json above — real manager emails + a
+# plaintext shared password, used once by scripts/createManagers.js.
+scripts/managers.json

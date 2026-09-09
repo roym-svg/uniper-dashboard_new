@@ -466,6 +466,13 @@ function fetchZendeskDeviceInCountForMonth_(month) {
   var url = 'https://' + ZENDESK_SUBDOMAIN + '.zendesk.com/api/v2/search/count.json?query=' + encodeURIComponent(query);
   var authHeader = 'Basic ' + Utilities.base64Encode(ZENDESK_EMAIL + '/token:' + ZENDESK_API_TOKEN);
 
+  // Logged on every call (including from getDevicesReport_, so these show
+  // up in Executions -> this run's log even when triggered from the web
+  // app, not just from a manual testZendesk() run) — the query text and
+  // URL contain no secret (the token only appears, base64-encoded, in the
+  // Authorization header, which is deliberately NOT logged).
+  Logger.log('Zendesk request for ' + month.label + ' -> ' + url);
+
   var response = UrlFetchApp.fetch(url, {
     method: 'get',
     headers: { Authorization: authHeader },
@@ -474,6 +481,8 @@ function fetchZendeskDeviceInCountForMonth_(month) {
 
   var statusCode = response.getResponseCode();
   var body = response.getContentText();
+
+  Logger.log('Zendesk response for ' + month.label + ' -> HTTP ' + statusCode + ': ' + body);
 
   if (statusCode < 200 || statusCode >= 300) {
     throw new Error('Zendesk API החזיר שגיאה (HTTP ' + statusCode + '): ' + body);
@@ -485,6 +494,30 @@ function fetchZendeskDeviceInCountForMonth_(month) {
   }
 
   return data.count;
+}
+
+/**
+ * Manual test — run this directly from the Apps Script editor (select
+ * testZendesk in the function dropdown, click Run) to isolate a Zendesk
+ * problem without going through the web app or the frontend at all.
+ *
+ * Prints the exact request URL, the HTTP status code, and the raw response
+ * body to the execution log (View -> Logs, or Executions in the left
+ * sidebar) — so a 401 (bad token/email), 400 (bad query/field id), or any
+ * other failure shows its real Zendesk-provided message instead of just a
+ * generic "שגיאה" badge in the UI. Uses the current calendar month, same
+ * as the live report would for "this month"'s row.
+ */
+function testZendesk() {
+  var months = buildReportMonthList_();
+  var thisMonth = months[months.length - 1]; // buildReportMonthList_ always ends on the current month
+  Logger.log('Testing Zendesk for month: ' + thisMonth.label);
+  try {
+    var count = fetchZendeskDeviceInCountForMonth_(thisMonth);
+    Logger.log('SUCCESS — devicesIn for ' + thisMonth.label + ' = ' + count);
+  } catch (err) {
+    Logger.log('FAILED — ' + (err && err.message ? err.message : String(err)));
+  }
 }
 
 /**

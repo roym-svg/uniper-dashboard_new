@@ -10,7 +10,16 @@ export async function fetchInventory() {
   const res = await fetch(API_URL, { method: 'GET' });
 
   if (!res.ok) {
-    throw new Error(`API request failed (HTTP ${res.status}).`);
+    // Includes the URL and a snippet of the response body so a 404/403/etc
+    // is traceable to WHICH request failed — this fetch() call always
+    // targets the Apps Script /exec URL directly (never Zendesk; Zendesk is
+    // only ever called from inside Code.gs, server-side, and its failures
+    // come back as a normal 200 JSON payload with an error field — see
+    // fetchDevicesReport's doc comment below). A 404 here means the Apps
+    // Script web app URL itself isn't resolving — see that function's doc
+    // comment for the likely causes.
+    const bodySnippet = await res.text().catch(() => '');
+    throw new Error(`API request failed (HTTP ${res.status}) for ${API_URL} — ${bodySnippet.slice(0, 300)}`);
   }
 
   const data = await res.json();
@@ -107,25 +116,38 @@ export async function reportLowInventory({ guideName, healthyCount, threshold })
 }
 
 /**
- * Fetches the "Devices Report" tab's two headline numbers from Code.gs's
- * getDevicesReport_ (via ?mode=devicesReport):
- *   - devicesIn: live count from Zendesk (a custom ticket field's value)
- *   - devicesOut: current row count in the "Unipass Inventory" sheet tab
+ * Fetches the "Devices Report" tab's monthly breakdown from Code.gs's
+ * getDevicesReport_ (via ?mode=devicesReport) — one row per month, each
+ * with devicesIn (Zendesk), devicesOut (the Devices Out Log tab), and diff.
  *
- * Each number can independently come back as null with a matching
- * *Error string (e.g. devicesInError) if that one source failed — Zendesk
- * misconfigured, sheet unreadable — WITHOUT the other one failing too.
- * This only throws for a whole-request failure (network down, non-2xx,
- * or the top-level { error: true } the backend returns for something that
- * broke before it could even attempt either lookup); a partial failure is
- * represented in the returned object, not thrown, so the caller can still
- * show whichever number did come back.
+ * Each month's two numbers can independently come back as null with a
+ * matching *Error string (e.g. devicesInError) if that one source failed —
+ * Zendesk misconfigured, sheet unreadable — WITHOUT any other month or
+ * metric failing too. Code.gs's doGet wraps EVERYTHING in a try/catch and
+ * always responds 200 OK (see Code.gs's doGet and getDevicesReport_) — it
+ * never lets a Zendesk failure bubble up as a non-2xx HTTP status. That
+ * means the `!res.ok` branch below can ONLY be triggered by this fetch()
+ * itself failing to reach doGet at all — i.e. a problem with the Apps
+ * Script web app URL/deployment, never a Zendesk problem. A 404 here
+ * specifically means: this exact URL (logged below) didn't resolve to any
+ * deployed web app. The most common cause is deploying via "New
+ * deployment" (which mints a brand-new /exec URL) instead of "Manage
+ * deployments" -> pencil icon -> "New version" (which keeps the SAME URL)
+ * — check Deploy -> Manage deployments in the Apps Script editor and
+ * confirm this exact URL is still listed as the active deployment, with
+ * access set to "Anyone". A real Zendesk failure (bad token, bad field id,
+ * 401/403 from Zendesk itself) shows up as devicesInError on a specific
+ * month row instead, never here.
  */
 export async function fetchDevicesReport() {
-  const res = await fetch(`${API_URL}?mode=devicesReport`, { method: 'GET' });
+  const url = `${API_URL}?mode=devicesReport`;
+  const res = await fetch(url, { method: 'GET' });
 
   if (!res.ok) {
-    throw new Error(`API request failed (HTTP ${res.status}).`);
+    const bodySnippet = await res.text().catch(() => '');
+    throw new Error(
+      `API request failed (HTTP ${res.status}) for ${url} — this is the Google Apps Script web app URL, not Zendesk (Zendesk failures show up per-month instead). ${bodySnippet.slice(0, 300)}`
+    );
   }
 
   const data = await res.json();

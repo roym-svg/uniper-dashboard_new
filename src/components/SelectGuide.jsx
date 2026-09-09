@@ -127,7 +127,7 @@ export default function SelectGuide({ boxes, onHideTechnician }) {
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-slate-900">{g.name}</p>
               <p className="text-xs text-slate-500">
-                {g.count} {g.count === 1 ? 'box' : 'boxes'}
+                {g.count} {g.count === 1 ? 'קופסה' : 'קופסאות'}
               </p>
             </div>
             <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:text-brand" />

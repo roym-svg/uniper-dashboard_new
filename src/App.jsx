@@ -137,6 +137,21 @@ export default function App() {
     }
   }, [profile, load]);
 
+  // Hourly auto-refresh — every screen this data feeds (SelectGuide's
+  // per-technician counts, an admin's Dashboard, a technician's own
+  // Dashboard) picks up the update automatically, since they all read the
+  // same `boxes` derived from this state; no per-screen wiring needed.
+  // isRefresh:true forces an actual network hit (bypassing the < 1 hour
+  // cache check in load() above) so this genuinely re-pulls from Google
+  // Sheets every hour rather than immediately re-serving the same cache.
+  useEffect(() => {
+    if (!profile) return;
+    const intervalId = setInterval(() => {
+      load({ isRefresh: true });
+    }, 60 * 60 * 1000); // 1 hour
+    return () => clearInterval(intervalId);
+  }, [profile, load]);
+
   const refreshIgnoredNames = useCallback(async () => {
     const list = await fetchIgnoredTechNames();
     setIgnoredNames(list);
