@@ -224,6 +224,25 @@ var ZENDESK_DEVICE_AGENT_FIELD_ID = '21559533055377'; // "Agent (IL)" custom fie
 var ZENDESK_DEVICE_AGENT_VALUE = 'shlomi'; // tag value for "Shlomi"
 var ZENDESK_DEVICE_STATUSES = ['solved', 'closed'];
 
+// ── Manual per-day overrides for "Devices In" ────────────────────────────
+// updated_at (what the Zendesk query above buckets by) is the ticket's
+// last-touched time — so a one-off bulk operation that touches many OLD
+// tickets on one day (e.g. a bot closing out a backlog of stale tickets)
+// makes that day look like a huge spike of devices coming back, when in
+// reality none of that happened today.
+//
+// A date listed here skips the live Zendesk query entirely for that one
+// day and uses the fixed number given instead — every other day in the
+// month is still counted live as normal, so this doesn't touch the rest
+// of the month's number.
+//
+// To add one: add a line 'YYYY-MM-DD': <real count for that day>, — remove
+// the line once it's no longer needed (e.g. next month, once this date is
+// safely in the past and won't be re-queried in a way that matters).
+var MANUAL_DEVICES_IN_OVERRIDES = {
+  '2026-09-10': 8 // bulk bot pass closed a backlog of old tickets today, inflating the live count — 8 is the real number of devices that came back today
+};
+
 // ── Devices Report: exact start date ─────────────────────────────────────
 // The report has NO data before this exact DAY, not just before this
 // month — the "Devices Out Log" tab only started actually being written on
@@ -646,6 +665,11 @@ function fetchZendeskCount_(query, label, creds) {
  * afterward (a comment, an unrelated tag) after being solved, it can drift
  * into a later month than when the device actually came back. Workable as
  * a proxy, not perfectly exact.
+ *
+ * Any date inside this month that's listed in MANUAL_DEVICES_IN_OVERRIDES
+ * (see above) is carved out of the live Zendesk range entirely — see
+ * buildLiveSegments_ — and the fixed number given there is added on top of
+ * whatever the live query returns for the rest of the month.
  */
 function fetchZendeskDeviceInCountForMonth_(month) {
   // Throws the same two Hebrew-language errors as before if either value is
@@ -654,22 +678,75 @@ function fetchZendeskDeviceInCountForMonth_(month) {
   // wipe them out again.
   var creds = getZendeskCredentials_();
 
-  var lowerBoundExclusive = addDays_(month.rangeStart, -1);
-  var dateRange =
-    ' updated>' + formatDateForZendesk_(lowerBoundExclusive) +
-    ' updated<' + formatDateForZendesk_(month.rangeEndExclusive);
+  var overrides = getManualOverridesInRange_(month.rangeStart, month.rangeEndExclusive);
+  var overrideDates = overrides.map(function (o) { return o.date; });
+  var overrideTotal = overrides.reduce(function (sum, o) { return sum + o.value; }, 0);
+
+  var segments = buildLiveSegments_(month.rangeStart, month.rangeEndExclusive, overrideDates);
+
   var baseQuery =
     'type:ticket ticket_form_id:' + ZENDESK_DEVICE_FORM_ID +
     ' custom_field_' + ZENDESK_DEVICE_AGENT_FIELD_ID + ':' + ZENDESK_DEVICE_AGENT_VALUE;
 
-  var total = 0;
-  for (var i = 0; i < ZENDESK_DEVICE_STATUSES.length; i++) {
-    var status = ZENDESK_DEVICE_STATUSES[i];
-    var query = baseQuery + ' status:' + status + dateRange;
-    total += fetchZendeskCount_(query, month.label + ' / status:' + status, creds);
+  var liveTotal = 0;
+  for (var s = 0; s < segments.length; s++) {
+    var segment = segments[s];
+    var lowerBoundExclusive = addDays_(segment.start, -1);
+    var dateRange =
+      ' updated>' + formatDateForZendesk_(lowerBoundExclusive) +
+      ' updated<' + formatDateForZendesk_(segment.end);
+    for (var i = 0; i < ZENDESK_DEVICE_STATUSES.length; i++) {
+      var status = ZENDESK_DEVICE_STATUSES[i];
+      var query = baseQuery + ' status:' + status + dateRange;
+      liveTotal += fetchZendeskCount_(query, month.label + ' / status:' + status + ' / segment ' + (s + 1), creds);
+    }
   }
 
-  return total;
+  return liveTotal + overrideTotal;
+}
+
+/**
+ * Returns every MANUAL_DEVICES_IN_OVERRIDES entry whose date falls inside
+ * [rangeStart, rangeEndExclusive), as { date: Date, value: number }, sorted
+ * oldest first. Empty array when nothing in this month is overridden — the
+ * normal, common case.
+ */
+function getManualOverridesInRange_(rangeStart, rangeEndExclusive) {
+  var result = [];
+  for (var key in MANUAL_DEVICES_IN_OVERRIDES) {
+    if (!MANUAL_DEVICES_IN_OVERRIDES.hasOwnProperty(key)) continue;
+    var parts = key.split('-');
+    var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    if (date >= rangeStart && date < rangeEndExclusive) {
+      result.push({ date: date, value: MANUAL_DEVICES_IN_OVERRIDES[key] });
+    }
+  }
+  result.sort(function (a, b) { return a.date - b.date; });
+  return result;
+}
+
+/**
+ * Splits [rangeStart, rangeEndExclusive) into the sub-ranges that should
+ * still be queried live from Zendesk, cutting out one full day for each
+ * date in `overrideDates` (already sorted oldest first, each a Date at
+ * local midnight). With no overrides this returns a single segment equal
+ * to the whole input range — same behavior as before this feature existed.
+ */
+function buildLiveSegments_(rangeStart, rangeEndExclusive, overrideDates) {
+  var segments = [];
+  var cursor = rangeStart;
+  for (var i = 0; i < overrideDates.length; i++) {
+    var overrideDate = overrideDates[i];
+    if (overrideDate < cursor) continue; // already past this one, e.g. duplicate/out-of-order entry
+    if (overrideDate > cursor) {
+      segments.push({ start: cursor, end: overrideDate });
+    }
+    cursor = addDays_(overrideDate, 1); // skip the override day itself
+  }
+  if (cursor < rangeEndExclusive) {
+    segments.push({ start: cursor, end: rangeEndExclusive });
+  }
+  return segments;
 }
 
 /**
